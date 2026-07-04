@@ -1,0 +1,5 @@
+match_id,league,market_type,home_team,away_team,live_status,home_score,away_score,odds_home,odds_draw,odds_away,handicap_line,over_under_line,memo
+5360,MLB,프로토 일반,텍사스,디트로이트,7회 초,0,3,1.80,,1.72,,,
+5361,MLB,승1패,텍사스,디트로이트,7회 초,0,3,2.65,3.20,2.18,,,
+5362,MLB,H +2.5,텍사스,디트로이트,7회 초,0,3,1.27,,2.87,2.5,,
+5363,MLB,U/O 7.5,텍사스,디트로이트,7회 초,0,3,,,,,7.5,

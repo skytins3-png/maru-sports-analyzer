@@ -1,0 +1,12 @@
+{
+  "APP_NAME": "MARU SPORTS ANALYZER",
+  "SPORT": "football",
+  "AUTO_PURCHASE": "NO",
+  "AUTO_PAYMENT": "NO",
+  "USER_MUST_CHOOSE": "YES",
+  "CACHE": {
+    "static_days": 7,
+    "pre_match_minutes": 30,
+    "post_match_days": 365
+  }
+}

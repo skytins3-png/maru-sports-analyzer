@@ -1,0 +1,23 @@
+MARU SPORTS ANALYZER 합본 점검 리포트
+
+결과: 합본 생성 및 Python compile 테스트 통과
+
+추가된 항목:
+- legacy_toto/app.py 원본 보존
+- sports/toto_dual_engine.py 기존 토토앱 핵심 분석 함수 분리
+- sports/backtest_engine.py 백테스트 래퍼 추가
+- sports/toto_adapter.py 기존 MARU SPORTS 경기 데이터를 듀얼 엔진 입력으로 변환
+- ui/dual_engine_panel.py 수동 듀얼 분석/빠른 백테스트 UI 추가
+- app.py에 듀얼 엔진 자동 비교 영역 연결
+
+보존된 원칙:
+- 자동구매 없음
+- 자동결제 없음
+- 사용자가 직접 선택
+- 기존 MARU KRA 보존 폴더 유지
+- 기존 SKYTOTO 토토앱 원본 보존
+
+테스트:
+- 모든 Python 파일 py_compile 통과
+- toto_dual_engine 샘플 dual_analyze 실행 통과
+- backtest_engine 빠른 백테스트 실행 통과
