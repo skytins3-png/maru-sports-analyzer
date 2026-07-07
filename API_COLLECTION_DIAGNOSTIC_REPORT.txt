@@ -1,0 +1,12 @@
+MARU SPORTS ANALYZER - API COLLECTION DIAGNOSTIC BUILD
+
+허브/구글시트 이전에 앱 안에서 실제 API 수집부터 확인하는 버전입니다.
+
+추가:
+1. Sportmonks API 직접 테스트 버튼
+2. 오늘 fixtures/date 호출
+3. 오늘 0건이면 오늘~7일 fixtures/between 자동 재시도
+4. HTTP status, data_count, response_preview 표시
+5. token 감지 여부 표시
+6. 실제 수집 성공 시 data_source=sportmonks
+7. 실패 시 sample fallback과 실패 이유 표시

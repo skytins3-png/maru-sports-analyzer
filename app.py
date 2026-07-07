@@ -17,6 +17,7 @@ from ui.dashboard import render_header, render_footer, render_system_status
 from ui.dual_engine_panel import render_dual_engine_panel
 from ui.live_score_panel import render_live_score_panel
 from ui.data_collection_panel import render_data_collection_panel
+from ui.sportmonks_diagnostic_panel import render_sportmonks_diagnostic_panel
 from sports.toto_adapter import analyze_fixture_with_dual_engine
 
 
@@ -114,6 +115,8 @@ def main():
             st.warning(f"Google Sheet 허브 저장 실패 또는 미설정: {msg}")
 
     log_event("app_run", {"fixtures": len(fixtures), "recommendations": len(recommendations)})
+    st.divider()
+    render_sportmonks_diagnostic_panel()
     st.divider()
     render_data_collection_panel(config, fixtures, snapshots, analyses, recommendations)
 
