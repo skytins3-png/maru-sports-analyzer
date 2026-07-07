@@ -15,6 +15,7 @@ from ui.empty_guard import render_empty_guard
 from ui.dashboard import render_header, render_footer, render_system_status
 from ui.dual_engine_panel import render_dual_engine_panel
 from ui.live_score_panel import render_live_score_panel
+from ui.data_collection_panel import render_data_collection_panel
 from sports.toto_adapter import analyze_fixture_with_dual_engine
 
 
@@ -46,10 +47,14 @@ def main():
 
     fixtures = load_sample_fixtures()
     recommendations = []
+    snapshots = []
+    analyses = []
 
     for fixture in fixtures:
         snapshot = build_pre_match_snapshot(fixture, cache=cache, use_slow_api=use_slow_api)
+        snapshots.append(snapshot)
         analysis = analyze_match(fixture, snapshot)
+        analyses.append(analysis)
         rec = build_recommendations(fixture, snapshot, analysis)
         if rec:
             recommendations.append(rec)
@@ -69,10 +74,10 @@ def main():
 
     st.divider()
     with st.expander("경기 원자료 보기"):
-        st.dataframe(pd.DataFrame(fixtures), use_container_width=True)
+        st.dataframe(pd.DataFrame(fixtures), width="stretch")
 
     with st.expander("추천 결과 원자료 보기"):
-        st.dataframe(pd.DataFrame(recommendations), use_container_width=True)
+        st.dataframe(pd.DataFrame(recommendations), width="stretch")
 
     with st.expander("기존 SKYTOTO 듀얼 엔진 자동 비교", expanded=False):
         dual_rows = []
@@ -88,7 +93,7 @@ def main():
                 "avg_confidence": dual["compare"].get("avg_conf", 0),
                 "risk": dual["compare"].get("max_risk", 0),
             })
-        st.dataframe(pd.DataFrame(dual_rows), use_container_width=True)
+        st.dataframe(pd.DataFrame(dual_rows), width="stretch")
 
     render_dual_engine_panel()
 
@@ -106,6 +111,9 @@ def main():
             st.warning(f"Google Sheet 허브 저장 실패 또는 미설정: {msg}")
 
     log_event("app_run", {"fixtures": len(fixtures), "recommendations": len(recommendations)})
+    st.divider()
+    render_data_collection_panel(config, fixtures, snapshots, analyses, recommendations)
+
     st.divider()
     render_live_score_panel()
 
