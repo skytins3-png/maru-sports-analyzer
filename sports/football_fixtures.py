@@ -3,12 +3,7 @@ try:
     from sports.sportmonks_client import get_last_collection_info
 except Exception:
     def get_last_collection_info():
-        return {
-            "source": "manual_only",
-            "ok": False,
-            "message": "Sportmonks 모듈 로드 실패",
-            "count": 0,
-        }
+        return {"source": "manual_only", "ok": False, "message": "Sportmonks 모듈 로드 실패", "count": 0}
 
 KST = timezone(timedelta(hours=9))
 
@@ -21,18 +16,17 @@ def sample_fixtures():
             "date": today,
             "league": "SAFE BOOT",
             "match_no": "001",
-            "home_team": "API 테스트 전",
-            "away_team": "버튼을 눌러 확인",
+            "home_team": "지난자료 수집 테스트",
+            "away_team": "버튼으로 확인",
             "kickoff_kst": f"{today} KST",
             "status": "manual_test_required",
             "data_source": "sample_safe_boot",
-            "fallback_reason": "안전부팅: 앱 시작 시 API 자동호출 안 함",
+            "fallback_reason": "앱 시작 시 API 자동호출 안 함",
         }
     ]
 
 
 def load_sample_fixtures():
-    # 중요: 앱 시작 때 절대 외부 API 호출하지 않음
     return sample_fixtures()
 
 

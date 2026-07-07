@@ -1,0 +1,20 @@
+MARU SPORTS ANALYZER - HISTORY RANGE TEST BUILD
+
+목적:
+- 분석 전에 Sportmonks에서 과거 몇 일분까지 실제로 받아지는지 확인
+- 앱 시작 시 API 자동호출 금지
+- 버튼으로만 지난 1/3/7/14/30/60/90일 테스트
+
+추가 기능:
+1. ui/history_range_test_panel.py
+2. sports/sportmonks_client.py에 test_history_range(), test_history_ranges()
+3. 지난 N일 between endpoint 호출
+4. 기간별 수집경기수 / HTTP / message 표시
+5. response_preview 표시
+6. tests/self_test_history_range.py 추가
+7. GitHub Actions history_range_self_test.yml 추가
+
+판단:
+- 지난 7일은 되는데 30일이 안 되면: 범위/플랜/제한 문제
+- 1일도 안 되면: 키/URL/권한 문제
+- HTTP 200인데 0건이면: 해당 범위 데이터 없음 또는 접근 가능한 리그 없음

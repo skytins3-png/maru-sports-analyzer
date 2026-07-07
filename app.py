@@ -19,6 +19,13 @@ from ui.live_score_panel import render_live_score_panel
 from ui.data_collection_panel import render_data_collection_panel
 from sports.toto_adapter import analyze_fixture_with_dual_engine
 try:
+    from ui.history_range_test_panel import render_history_range_test_panel
+except Exception as _history_test_error:
+    def render_history_range_test_panel():
+        import streamlit as st
+        st.error("지난 경기 수집 테스트 패널 import 실패")
+        st.code(str(_history_test_error), language="text")
+try:
     from ui.sportmonks_diagnostic_panel import render_sportmonks_diagnostic_panel
 except Exception as _diag_error:
     def render_sportmonks_diagnostic_panel():

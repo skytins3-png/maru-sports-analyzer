@@ -12,7 +12,7 @@ DEFAULT_BETWEEN_URL = "https://api.sportmonks.com/v3/football/fixtures/between/{
 LAST_COLLECTION_INFO: Dict[str, Any] = {
     "source": "manual_only",
     "ok": False,
-    "message": "안전부팅 모드: 앱 시작 시 API 자동수집 안 함. 버튼을 눌러 수동 테스트.",
+    "message": "안전부팅 모드: 앱 시작 시 API 자동수집 안 함. 버튼으로만 테스트.",
     "http_status": "",
     "count": 0,
     "data_count": 0,
@@ -26,12 +26,12 @@ def now_kst() -> str:
     return datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S KST")
 
 
-def today_dash() -> str:
-    return datetime.now(KST).strftime("%Y-%m-%d")
-
-
-def add_days_dash(days: int) -> str:
+def date_dash_offset(days: int) -> str:
     return (datetime.now(KST) + timedelta(days=days)).strftime("%Y-%m-%d")
+
+
+def today_dash() -> str:
+    return date_dash_offset(0)
 
 
 def _read_secret(name: str, default: str = "") -> str:
@@ -131,7 +131,7 @@ def normalize_fixture(f: Dict[str, Any], idx: int = 1) -> Dict[str, Any]:
     }
 
 
-def _call_url(url: str, token: str, source_name: str, timeout: int = 12) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+def _call_url(url: str, token: str, source_name: str, timeout: int = 15) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     safe_url = _mask_url(url, token)
     try:
         res = requests.get(url, timeout=timeout)
@@ -177,17 +177,12 @@ def _call_url(url: str, token: str, source_name: str, timeout: int = 12) -> Tupl
         }
 
 
-def fetch_sportmonks_fixtures(date_dash: Optional[str] = None, timeout: int = 12) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
-    """
-    수동 테스트 버튼에서만 호출해야 한다.
-    앱 시작/페이지 로드에서는 호출하지 않는다.
-    """
+def fetch_sportmonks_between(from_dash: str, to_dash: str, timeout: int = 15) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     global LAST_COLLECTION_INFO
-    date_dash = date_dash or today_dash()
     token = get_token()
     if not token:
         info = {
-            "source": "sportmonks",
+            "source": "sportmonks_between",
             "ok": False,
             "message": "SPORTMONKS_API_TOKEN 또는 SPORTS_API_KEY 없음",
             "http_status": "",
@@ -196,54 +191,77 @@ def fetch_sportmonks_fixtures(date_dash: Optional[str] = None, timeout: int = 12
             "response_preview": "",
             "safe_final_url": "",
             "updated_at": now_kst(),
+            "from_dash": from_dash,
+            "to_dash": to_dash,
         }
         LAST_COLLECTION_INFO = info
         return [], info
 
-    try:
-        url = get_date_url_template().format(today_dash=date_dash, api_key=token)
-    except Exception as e:
-        info = {
-            "source": "sportmonks_date",
-            "ok": False,
-            "message": f"URL 템플릿 오류: {e}",
-            "http_status": "",
-            "count": 0,
-            "data_count": 0,
-            "response_preview": "",
-            "safe_final_url": get_date_url_template(),
-            "updated_at": now_kst(),
-        }
-        LAST_COLLECTION_INFO = info
-        return [], info
+    url = DEFAULT_BETWEEN_URL.format(from_dash=from_dash, to_dash=to_dash, api_key=token)
+    fixtures, info = _call_url(url, token, f"sportmonks_between_{from_dash}_{to_dash}", timeout=timeout)
+    info["from_dash"] = from_dash
+    info["to_dash"] = to_dash
+    LAST_COLLECTION_INFO = info
+    return fixtures, info
 
-    fixtures, info = _call_url(url, token, "sportmonks_date", timeout)
-    if fixtures:
-        LAST_COLLECTION_INFO = info
-        return fixtures, info
 
-    between_url = DEFAULT_BETWEEN_URL.format(from_dash=date_dash, to_dash=add_days_dash(7), api_key=token)
-    fixtures2, info2 = _call_url(between_url, token, "sportmonks_between_7d", timeout)
-    if fixtures2:
-        info2["message"] = f"오늘 경기 실패/0건 후 7일 범위 수집 성공. 1차: {info.get('message')}"
-        LAST_COLLECTION_INFO = info2
-        return fixtures2, info2
+def test_history_range(days_back: int, timeout: int = 15) -> Dict[str, Any]:
+    """
+    지난 N일 범위가 실제로 몇 경기 받아지는지 테스트.
+    예: days_back=7이면 오늘 기준 -7일 ~ 오늘.
+    """
+    from_dash = date_dash_offset(-abs(int(days_back)))
+    to_dash = today_dash()
+    fixtures, info = fetch_sportmonks_between(from_dash, to_dash, timeout=timeout)
+    return {
+        "range_days": abs(int(days_back)),
+        "from_dash": from_dash,
+        "to_dash": to_dash,
+        "fixtures_count": len(fixtures),
+        "ok": bool(fixtures),
+        "info": info,
+        "first_fixture": fixtures[0] if fixtures else {},
+    }
 
-    info2["message"] = f"date 실패/0건: {info.get('message')} | between 실패/0건: {info2.get('message')}"
-    info2["first_try"] = info
-    LAST_COLLECTION_INFO = info2
-    return [], info2
+
+def test_history_ranges(days_list=None, timeout: int = 12) -> Dict[str, Any]:
+    """
+    여러 기간을 차례로 테스트. 너무 무겁지 않게 버튼으로만 실행.
+    """
+    if days_list is None:
+        days_list = [1, 3, 7, 14, 30, 60, 90]
+    results = []
+    max_ok_days = 0
+    for days in days_list:
+        result = test_history_range(int(days), timeout=timeout)
+        results.append(result)
+        if result.get("fixtures_count", 0) > 0:
+            max_ok_days = int(days)
+    return {
+        "tested_at": now_kst(),
+        "max_range_with_data": max_ok_days,
+        "results": results,
+    }
+
+
+def fetch_sportmonks_fixtures(date_dash: Optional[str] = None, timeout: int = 12) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """
+    호환용 함수. 오늘~7일 미래/현재 테스트에 사용.
+    앱 시작 시에는 호출하지 않는다.
+    """
+    date_dash = date_dash or today_dash()
+    return fetch_sportmonks_between(date_dash, date_dash, timeout=timeout)
 
 
 def run_diagnostic_test() -> Dict[str, Any]:
     token = get_token()
-    fixtures, info = fetch_sportmonks_fixtures(timeout=12)
+    result = test_history_range(7, timeout=12)
     return {
         "token_detected": bool(token),
         "token_preview": token[:4] + "…" + token[-4:] if token and len(token) > 8 else ("있음" if token else "없음"),
-        "fixtures_count": len(fixtures),
-        "info": info,
-        "first_fixture": fixtures[0] if fixtures else {},
+        "fixtures_count": result.get("fixtures_count", 0),
+        "info": result.get("info", {}),
+        "first_fixture": result.get("first_fixture", {}),
     }
 
 
