@@ -2,13 +2,10 @@
 # 원본 보존 위치: legacy_toto/app.py
 # 자동구매/자동결제 없음. 분석 참고용 함수만 분리.
 
-from __future__ import annotations
-
 import hashlib
 import json
 import math
 import re
-from dataclasses import dataclass, asdict
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -129,41 +126,84 @@ def softmax_dict(scores: Dict[str, float]) -> Dict[str, float]:
 def clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
 
-@dataclass
+
 class MatchInput:
-    league: str
-    home_team: str
-    away_team: str
-    match_minute: int
-    home_live_score: int
-    away_live_score: int
-    odds_home: float
-    odds_draw: float
-    odds_away: float
-    home_form_score: float
-    away_form_score: float
-    home_attack: float
-    away_attack: float
-    home_defense_risk: float
-    away_defense_risk: float
-    home_main_injuries: int
-    away_main_injuries: int
-    home_suspended: int
-    away_suspended: int
-    home_bench_depth: float
-    away_bench_depth: float
-    home_tactic_fit: float
-    away_tactic_fit: float
-    home_coach_months: int
-    away_coach_months: int
-    home_rotation_risk: float
-    away_rotation_risk: float
-    home_motivation: float
-    away_motivation: float
-    coach_note: str
-    tactic_note: str
-    lineup_note: str
-    market_note: str
+    """
+    Python 3.14 Streamlit Cloud dataclass 초기화 문제를 피하기 위한 안전 클래스.
+    기존 속성명은 그대로 유지한다.
+    """
+    def __init__(
+        self,
+        league: str = "",
+        home_team: str = "",
+        away_team: str = "",
+        match_minute: int = 0,
+        home_live_score: int = 0,
+        away_live_score: int = 0,
+        odds_home: float = 0.0,
+        odds_draw: float = 0.0,
+        odds_away: float = 0.0,
+        home_form_score: float = 50.0,
+        away_form_score: float = 50.0,
+        home_attack: float = 50.0,
+        away_attack: float = 50.0,
+        home_defense_risk: float = 50.0,
+        away_defense_risk: float = 50.0,
+        home_main_injuries: int = 0,
+        away_main_injuries: int = 0,
+        home_suspended: int = 0,
+        away_suspended: int = 0,
+        home_bench_depth: float = 50.0,
+        away_bench_depth: float = 50.0,
+        home_tactic_fit: float = 50.0,
+        away_tactic_fit: float = 50.0,
+        home_coach_months: int = 0,
+        away_coach_months: int = 0,
+        home_rotation_risk: float = 50.0,
+        away_rotation_risk: float = 50.0,
+        home_motivation: float = 50.0,
+        away_motivation: float = 50.0,
+        coach_note: str = "",
+        tactic_note: str = "",
+        lineup_note: str = "",
+        market_note: str = "",
+        **extra,
+    ):
+        self.league = league
+        self.home_team = home_team
+        self.away_team = away_team
+        self.match_minute = match_minute
+        self.home_live_score = home_live_score
+        self.away_live_score = away_live_score
+        self.odds_home = odds_home
+        self.odds_draw = odds_draw
+        self.odds_away = odds_away
+        self.home_form_score = home_form_score
+        self.away_form_score = away_form_score
+        self.home_attack = home_attack
+        self.away_attack = away_attack
+        self.home_defense_risk = home_defense_risk
+        self.away_defense_risk = away_defense_risk
+        self.home_main_injuries = home_main_injuries
+        self.away_main_injuries = away_main_injuries
+        self.home_suspended = home_suspended
+        self.away_suspended = away_suspended
+        self.home_bench_depth = home_bench_depth
+        self.away_bench_depth = away_bench_depth
+        self.home_tactic_fit = home_tactic_fit
+        self.away_tactic_fit = away_tactic_fit
+        self.home_coach_months = home_coach_months
+        self.away_coach_months = away_coach_months
+        self.home_rotation_risk = home_rotation_risk
+        self.away_rotation_risk = away_rotation_risk
+        self.home_motivation = home_motivation
+        self.away_motivation = away_motivation
+        self.coach_note = coach_note
+        self.tactic_note = tactic_note
+        self.lineup_note = lineup_note
+        self.market_note = market_note
+        for k, v in extra.items():
+            setattr(self, k, v)
 
     @property
     def match_key(self) -> str:
@@ -171,27 +211,56 @@ class MatchInput:
         return re.sub(r"\s+", " ", raw).strip().lower()
 
 
-@dataclass
+
 class AnalysisResult:
-    source: str
-    match_key: str
-    league: str
-    home_team: str
-    away_team: str
-    predicted_outcome: str
-    predicted_label: str
-    predicted_score: str
-    confidence: float
-    risk: str
-    risk_score: float
-    home_prob: float
-    draw_prob: float
-    away_prob: float
-    reasons: List[str]
-    danger_cases: List[str]
-    top_cases: List[Dict[str, Any]]
-    top_scorelines: List[Dict[str, Any]]
-    created_at: str
+    """
+    Python 3.14 Streamlit Cloud dataclass 초기화 문제를 피하기 위한 안전 클래스.
+    """
+    def __init__(
+        self,
+        source: str = "",
+        match_key: str = "",
+        league: str = "",
+        home_team: str = "",
+        away_team: str = "",
+        predicted_outcome: str = "",
+        predicted_label: str = "",
+        predicted_score: str = "",
+        confidence: float = 0.0,
+        risk: str = "",
+        risk_score: float = 0.0,
+        home_prob: float = 0.0,
+        draw_prob: float = 0.0,
+        away_prob: float = 0.0,
+        reasons=None,
+        danger_cases=None,
+        top_cases=None,
+        top_scorelines=None,
+        created_at: str = "",
+        **extra,
+    ):
+        self.source = source
+        self.match_key = match_key
+        self.league = league
+        self.home_team = home_team
+        self.away_team = away_team
+        self.predicted_outcome = predicted_outcome
+        self.predicted_label = predicted_label
+        self.predicted_score = predicted_score
+        self.confidence = confidence
+        self.risk = risk
+        self.risk_score = risk_score
+        self.home_prob = home_prob
+        self.draw_prob = draw_prob
+        self.away_prob = away_prob
+        self.reasons = reasons or []
+        self.danger_cases = danger_cases or []
+        self.top_cases = top_cases or []
+        self.top_scorelines = top_scorelines or []
+        self.created_at = created_at
+        for k, v in extra.items():
+            setattr(self, k, v)
+
 
 def sample_history() -> pd.DataFrame:
     # 실제 앱에서는 CSV/구글시트에서 수천~수만 경기 과거자료를 넣는 구조.
@@ -891,7 +960,7 @@ def scenario_test_pack() -> pd.DataFrame:
 
 
 def result_to_dict(result: AnalysisResult) -> Dict[str, Any]:
-    return asdict(result)
+    return dict(getattr(result, '__dict__', {}))
 
 
 def dual_analyze(inp: MatchInput, history: Optional[pd.DataFrame] = None) -> Dict[str, Any]:

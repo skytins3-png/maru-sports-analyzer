@@ -1,0 +1,23 @@
+MARU SPORTS ANALYZER - PYTHON 3.14 DATACLASS FIX
+
+로그 원인:
+- Streamlit Cloud가 Python 3.14.6 환경에서 실행됨.
+- sports/toto_dual_engine.py의 @dataclass 처리 중 dataclasses 내부에서 sys.modules.get(cls.__module__)가 None을 반환.
+- 결과: AttributeError: 'NoneType' object has no attribute '__dict__'
+
+이번 수정:
+1. sports/toto_dual_engine.py에서 @dataclass 제거
+2. MatchInput / AnalysisResult를 일반 안전 클래스로 교체
+3. 기존 속성명과 생성자 인자는 유지
+4. result_to_dict는 asdict 대신 __dict__ 기반으로 변경
+5. Python compile 검사 통과
+6. 듀얼 엔진 import / sample analyze smoke test 통과
+7. Sportmonks 실제 수집 연결 코드는 유지
+8. 자동구매/자동결제 없음 유지
+
+업로드:
+- ZIP 압축 풀기
+- app.py가 보이는 위치에서 전체 선택
+- GitHub에 덮어쓰기 업로드
+- Commit changes
+- Streamlit Reboot
