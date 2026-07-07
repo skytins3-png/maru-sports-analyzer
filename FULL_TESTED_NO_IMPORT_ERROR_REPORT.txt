@@ -1,0 +1,26 @@
+MARU SPORTS ANALYZER - FULL TESTED NO IMPORT ERROR BUILD
+
+이번 빌드는 이전처럼 compile만 보고 끝내지 않고 아래 테스트를 넣고 실제 실행했습니다.
+
+검사 항목:
+1. 필수 파일 존재 검사
+2. sports/sportmonks_client.py 안에 run_diagnostic_test 존재 검사
+3. fetch_sportmonks_fixtures 존재 검사
+4. ui/sportmonks_diagnostic_panel.py 상단 5줄에 위험한 top-level Sportmonks import가 없는지 검사
+5. 전체 Python 파일 py_compile 검사
+6. Fake Streamlit 환경에서 app.py import 검사
+7. sports.sportmonks_client import 검사
+8. sports.football_fixtures import 검사
+9. ui.sportmonks_diagnostic_panel import 검사
+10. sports.toto_dual_engine import 검사
+11. sports.toto_adapter import 검사
+12. API 키 없는 상태에서 run_diagnostic_test 안전 fallback 검사
+13. requests.get 가짜 응답으로 Sportmonks 실제 수집 성공 경로 검사
+14. 홈팀/원정팀 participants 파싱 검사
+15. 자동구매/자동결제 기능 없음 유지
+
+추가 파일:
+- tests/self_test.py
+- .github/workflows/self_test.yml
+
+GitHub 업로드 후 Actions에서 MARU SPORTS Self Test를 수동 실행하면 같은 검사를 다시 볼 수 있습니다.

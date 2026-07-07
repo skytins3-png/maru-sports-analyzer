@@ -17,14 +17,15 @@ from ui.dashboard import render_header, render_footer, render_system_status
 from ui.dual_engine_panel import render_dual_engine_panel
 from ui.live_score_panel import render_live_score_panel
 from ui.data_collection_panel import render_data_collection_panel
+from sports.toto_adapter import analyze_fixture_with_dual_engine
+
 try:
     from ui.sportmonks_diagnostic_panel import render_sportmonks_diagnostic_panel
-except Exception as _sportmonks_diag_import_error:
+except Exception as _diag_error:
     def render_sportmonks_diagnostic_panel():
         import streamlit as st
         st.error("Sportmonks 진단 패널 import 실패")
-        st.code(str(_sportmonks_diag_import_error), language="text")
-from sports.toto_adapter import analyze_fixture_with_dual_engine
+        st.code(str(_diag_error), language="text")
 
 
 patch_streamlit_dataframe(st)
