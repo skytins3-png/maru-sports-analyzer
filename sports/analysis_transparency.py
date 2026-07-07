@@ -7,9 +7,9 @@ KST = timezone(timedelta(hours=9))
 def now_kst() -> str:
     return datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S KST")
 
-def build_collection_status(fixture_count: int = 0, live_count: int = 0, has_sports_api: bool = False, has_odds_api: bool = False, has_weather_api: bool = False, sheet_enabled: bool = False) -> List[Dict[str, Any]]:
+def build_collection_status(fixture_count: int = 0, live_count: int = 0, has_sports_api: bool = False, has_odds_api: bool = False, has_weather_api: bool = False, sheet_enabled: bool = False, fixture_source: str = '', fixture_message: str = '') -> List[Dict[str, Any]]:
     return [
-        {"category": "경기 일정", "status": "API 연결" if has_sports_api else "샘플/수동", "source": "SPORTS_API_KEY / 샘플", "count": fixture_count, "updated_at": now_kst(), "note": "API 연결 시 실제 경기 일정으로 교체"},
+        {"category": "경기 일정", "status": "실제 API" if fixture_source == "sportmonks" and fixture_count else ("API 대기" if has_sports_api else "샘플/수동"), "source": fixture_source or "SPORTS_API_KEY / 샘플", "count": fixture_count, "updated_at": now_kst(), "note": fixture_message or "API 연결 시 실제 경기 일정으로 교체"},
         {"category": "라이브스코어", "status": "API 연결" if has_sports_api else "수동/CSV", "source": "SPORTS_API_KEY / CSV / Google Sheet", "count": live_count, "updated_at": now_kst(), "note": "실시간 점수/이닝/시간"},
         {"category": "배당/핸디캡/언오버", "status": "API 연결" if has_odds_api else "수동/CSV", "source": "ODDS_API_KEY / CSV", "count": 0, "updated_at": now_kst(), "note": "배당 흐름, 기준점"},
         {"category": "부상자/결장자/라인업", "status": "API 연결" if has_sports_api else "후순위", "source": "SPORTS_API_KEY", "count": 0, "updated_at": now_kst(), "note": "경기 전 변동자료"},

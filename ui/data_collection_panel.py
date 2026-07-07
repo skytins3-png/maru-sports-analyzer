@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from core.config import AppConfig
 from core.api_clients import mask_key
+from sports.football_fixtures import get_fixture_collection_info
 from sports.analysis_transparency import build_collection_status, build_score_breakdown_from_analysis, package_raw_data
 
 def _df(rows):
@@ -15,6 +16,7 @@ def render_data_collection_panel(config: AppConfig, fixtures: list, snapshots: l
     st.subheader("📡 자료수집 현황판")
     st.caption("수집 자료, 원자료, 분석 점수표를 직접 확인할 수 있습니다. 자동구매/자동결제는 없습니다.")
 
+    fixture_info = get_fixture_collection_info()
     status_rows = build_collection_status(
         fixture_count=len(fixtures),
         live_count=0,
@@ -22,8 +24,13 @@ def render_data_collection_panel(config: AppConfig, fixtures: list, snapshots: l
         has_odds_api=bool(config.odds_api_key),
         has_weather_api=bool(config.weather_api_key),
         sheet_enabled=bool(config.gas_webapp_url),
+        fixture_source=fixture_info.get('source', ''),
+        fixture_message=fixture_info.get('message', ''),
     )
     st.dataframe(_df(status_rows), width="stretch", hide_index=True)
+
+    with st.expander("⚽ Sportmonks 실제 수집 상태", expanded=True):
+        st.json(fixture_info, expanded=False)
 
     with st.expander("🔐 API 연결 상태 보기", expanded=False):
         api_rows = [
