@@ -1,0 +1,15 @@
+MARU SPORTS ANALYZER - HISTORY PANEL VISIBLE FIX
+
+원인:
+- app.py에 ui.history_range_test_panel import는 있었음.
+- 그러나 main() 안에서 render_history_range_test_panel() 호출이 없었음.
+- 그래서 화면에 '📚 지난 경기 수집 가능 일수 테스트'가 표시되지 않았음.
+
+수정:
+1. render_system_status() 바로 아래에 render_history_range_test_panel() 추가
+2. 그 아래에 render_sportmonks_diagnostic_panel()도 표시
+3. 앱 시작 시 API 자동 호출 없음 유지
+4. 버튼을 눌렀을 때만 지난 1/3/7/14/30/60/90일 테스트
+
+확인:
+- 앱 화면 상단 상태표 아래에 '📚 지난 경기 수집 가능 일수 테스트'가 보여야 함.

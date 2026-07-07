@@ -85,6 +85,12 @@ def main():
         sheet_enabled=save_to_sheet,
     )
 
+    st.divider()
+    render_history_range_test_panel()
+
+    st.divider()
+    render_sportmonks_diagnostic_panel()
+
     if recommendations:
         render_mobile_cards(recommendations)
     else:
