@@ -54,7 +54,7 @@ def render_dual_engine_panel():
             comp = result["compare"]
             st.success(f"{comp['icon']} 최종판정: {comp['final']} / 평균신뢰도 {comp.get('avg_conf', 0)}%")
             st.write("비교 메모:", " / ".join(comp.get("notes", [])))
-            st.dataframe(pd.DataFrame([result["hub"], result["sheet"]]), use_container_width=True)
+            st.dataframe(pd.DataFrame([result["hub"], result["sheet"]]), width="stretch")
 
     with st.expander("빠른 백테스트", expanded=False):
         row_count = st.slider("실험 과거자료 수", 100, 3000, 500, step=100)
@@ -67,6 +67,6 @@ def render_dual_engine_panel():
                 c1.metric("허브 적중률", f"{bt.get('hub_accuracy', 0)}%")
                 c2.metric("시트 적중률", f"{bt.get('sheet_accuracy', 0)}%")
                 c3.metric("동시일치 적중률", f"{bt.get('same_accuracy', 0)}%")
-                st.dataframe(pd.DataFrame(bt.get("rows", [])[:200]), use_container_width=True)
+                st.dataframe(pd.DataFrame(bt.get("rows", [])[:200]), width="stretch")
             else:
                 st.warning(bt.get("message", "백테스트 실패"))

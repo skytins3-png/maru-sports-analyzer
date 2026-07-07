@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+from sports.analysis_transparency import build_live_score_breakdown
 
 from sports.live_score_engine import (
     sample_live_rows,
@@ -35,6 +36,8 @@ def render_live_score_cards(results):
             st.write(f"위험도: **{row['risk']}**")
             st.caption(row["summary"])
             st.caption("자동구매/자동결제 없음 · 사용자가 직접 선택")
+            with st.expander("LIVE 분석 점수표 / 근거 보기"):
+                st.dataframe(pd.DataFrame(build_live_score_breakdown(row)), width="stretch", hide_index=True)
 
 
 def render_live_score_panel():
@@ -45,7 +48,7 @@ def render_live_score_panel():
 
     with tab1:
         rows = sample_live_rows()
-        st.dataframe(pd.DataFrame(rows), use_container_width=True)
+        st.dataframe(pd.DataFrame(rows), width="stretch")
         results = analyze_live_rows(rows)
         render_live_score_cards(results)
 
@@ -97,7 +100,7 @@ def render_live_score_panel():
             try:
                 from io import StringIO
                 df = pd.read_csv(StringIO(csv_text))
-                st.dataframe(df, use_container_width=True)
+                st.dataframe(df, width="stretch")
                 results = analyze_live_rows(df.to_dict("records"))
                 render_live_score_cards(results)
             except Exception as e:

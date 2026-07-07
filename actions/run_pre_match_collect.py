@@ -1,3 +1,7 @@
+from pathlib import Path
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from core.cache_manager import CacheManager
 from core.safe_logger import log_event
 from sports.football_fixtures import load_sample_fixtures
