@@ -1,0 +1,20 @@
+MARU SPORTS ANALYZER - IMPORT SAFE DIAGNOSTIC FIX
+
+오류 원인:
+- app.py 시작 단계에서 ui.sportmonks_diagnostic_panel을 import
+- sportmonks_diagnostic_panel이 다시 sports.sportmonks_client를 top-level import
+- sportmonks_client 누락/업로드 실패/내부 오류가 있으면 앱 전체가 ImportError로 중단됨
+
+이번 수정:
+1. 진단 패널에서 sports.sportmonks_client top-level import 제거
+2. 버튼 실행 시점에만 lazy import
+3. import 실패해도 앱 전체는 계속 뜨고, 화면에 원인 표시
+4. app.py의 진단 패널 import도 try/except로 보호
+5. sports/__init__.py, ui/__init__.py 추가
+6. Python compile 검사 통과
+
+업로드:
+- ZIP 압축 풀기
+- app.py가 보이는 폴더 전체를 GitHub에 덮어쓰기
+- Commit changes
+- Streamlit Reboot
