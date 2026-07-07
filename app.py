@@ -18,6 +18,7 @@ from ui.dual_engine_panel import render_dual_engine_panel
 from ui.live_score_panel import render_live_score_panel
 from ui.data_collection_panel import render_data_collection_panel
 from sports.toto_adapter import analyze_fixture_with_dual_engine
+from ui.history_store_panel import render_history_store_panel
 try:
     from ui.history_range_test_panel import render_history_range_test_panel
 except Exception as _history_test_error:
@@ -87,6 +88,9 @@ def main():
 
     st.divider()
     render_history_range_test_panel()
+
+    st.divider()
+    render_history_store_panel(fixtures)
 
     st.divider()
     render_sportmonks_diagnostic_panel()
