@@ -1,0 +1,22 @@
+{
+  "_saved_at": "2026-07-08T06:48:38.319406+09:00",
+  "payload": {
+    "match_id": "2026-07-08_SAFE_001",
+    "lineup_status": "probable",
+    "home_recent_form": 84,
+    "away_recent_form": 77,
+    "home_attack": 60,
+    "away_attack": 78,
+    "home_defense": 44,
+    "away_defense": 57,
+    "home_injury_risk": 5,
+    "away_injury_risk": 22,
+    "odds_home_movement": -0.071,
+    "odds_draw_movement": -0.018,
+    "odds_away_movement": -0.127,
+    "expected_total_goals": 1.99,
+    "weather_risk": 1,
+    "news_score": 63,
+    "slow_api_used": true
+  }
+}
