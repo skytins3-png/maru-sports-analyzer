@@ -1,0 +1,30 @@
+MARU SPORTS ANALYZER - DATA VISIBLE FINAL
+
+추가된 화면:
+1. 자료수집 현황판
+2. API 연결 상태 보기
+3. 경기 일정 원자료
+4. 경기 전 변동자료
+5. 추천 결과 원자료
+6. JSON 원본 보기
+7. 분석 점수표
+8. 라이브스코어 카드별 근거표
+
+추가된 파일:
+- core/api_clients.py
+- sports/analysis_transparency.py
+- ui/data_collection_panel.py
+- actions/run_data_visible_collect.py
+- .github/workflows/data_visible_collect.yml
+
+Secrets 예시:
+SPORTS_API_KEY = "본인_API_키"
+ODDS_API_KEY = "본인_API_키"
+WEATHER_API_KEY = "본인_API_키"
+GAS_WEBAPP_URL = "본인_GAS_URL"
+GOOGLE_SHEET_ID = "본인_SHEET_ID"
+USE_SLOW_API = "Y"
+
+주의:
+자동구매/자동결제 기능은 없습니다.
+승패 100% 확정이 아니라 수집자료 기반 후보/위험도 분석입니다.

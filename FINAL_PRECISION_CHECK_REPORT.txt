@@ -1,0 +1,27 @@
+MARU SPORTS ANALYZER FINAL PRECISION CHECK REPORT
+
+목표 앱 주소:
+https://maru-sports-analyzer.streamlit.app
+
+Streamlit 배포 입력값:
+Repository: skytins3-png/maru-sports-analyzer
+Branch: main
+Main file path: app.py
+App URL: maru-sports-analyzer
+
+정밀 검사 결과:
+1. Python compileall 통과
+2. actions/run_live_score_collect.py 실행 통과
+3. actions/run_pre_match_collect.py 실행 통과
+4. actions/run_daily_collect.py 실행 통과
+5. actions/run_post_match_collect.py 실행 통과
+6. active code의 use_container_width 경고 제거: width="stretch"로 교체
+7. GitHub Actions에서 actions/*.py 직접 실행 시 import 오류 방지용 sys.path 보정 완료
+8. requirements.txt 배포 안정화
+9. .streamlit/config.toml 추가
+10. 자동구매/자동결제 기능 없음. 관련 필드는 NO로 고정
+
+업로드 주의:
+- 이 ZIP 파일 자체를 GitHub에 올리지 마세요.
+- 압축을 풀고 app.py가 바로 보이는 안쪽 파일/폴더 전체를 업로드하세요.
+- GitHub 첫 화면에 app.py, requirements.txt, core/, sports/, ui/, actions/, .github/가 바로 보여야 합니다.

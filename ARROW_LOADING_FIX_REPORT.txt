@@ -1,0 +1,20 @@
+MARU SPORTS ANALYZER - ARROW / MOBILE LOADING FIX
+
+로그 확인 결과:
+- 앱 서버는 정상 시작되었습니다.
+- Uvicorn server started on :::8501 로그가 있습니다.
+- 치명적인 SyntaxError / ModuleNotFoundError / Secrets TOML error는 보이지 않습니다.
+- 반복 문제는 st.dataframe 표 출력 중 PyArrow 변환 경고입니다.
+
+이번 수정:
+1. core/display_safe.py 추가
+2. st.dataframe 전체 호출을 안전 출력으로 자동 감싸기
+3. object 컬럼 안의 str/float/None 혼합값을 문자열로 통일
+4. runtime.txt / .python-version을 3.12로 안정화
+5. pandas<3, pyarrow<24로 안정화
+
+업로드:
+- ZIP 압축 풀기
+- app.py가 보이는 위치의 파일 전체를 GitHub에 덮어쓰기
+- Commit changes
+- Streamlit Reboot

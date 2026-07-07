@@ -1,4 +1,5 @@
 import streamlit as st
+from core.display_safe import patch_streamlit_dataframe
 import pandas as pd
 from datetime import datetime, timezone, timedelta
 
@@ -18,6 +19,8 @@ from ui.live_score_panel import render_live_score_panel
 from ui.data_collection_panel import render_data_collection_panel
 from sports.toto_adapter import analyze_fixture_with_dual_engine
 
+
+patch_streamlit_dataframe(st)
 
 KST = timezone(timedelta(hours=9))
 

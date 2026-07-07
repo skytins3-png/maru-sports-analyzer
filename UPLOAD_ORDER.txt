@@ -1,0 +1,24 @@
+MARU SPORTS ANALYZER 업로드 순서
+
+1. 이 ZIP 압축을 풉니다.
+2. 압축 푼 폴더 안에서 app.py가 바로 보이는 위치로 들어갑니다.
+3. GitHub 저장소 maru-sports-analyzer 첫 화면에 아래 파일/폴더가 바로 보이게 업로드합니다.
+   - app.py
+   - requirements.txt
+   - README.md
+   - core/
+   - sports/
+   - ui/
+   - actions/
+   - .github/
+   - .streamlit/
+   - google_apps_script_hub.gs
+   - live_score_sample.csv
+4. Commit changes를 누릅니다.
+5. Streamlit Deploy 입력값:
+   Repository: skytins3-png/maru-sports-analyzer
+   Branch: main
+   Main file path: app.py
+   App URL: maru-sports-analyzer
+
+주의: ZIP 파일 자체를 GitHub에 올리지 말고, 압축을 푼 안쪽 파일들을 올리세요.
