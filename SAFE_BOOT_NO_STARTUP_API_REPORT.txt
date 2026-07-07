@@ -1,0 +1,20 @@
+MARU SPORTS ANALYZER - SAFE BOOT / NO STARTUP API
+
+문제 판단:
+- Streamlit 서버는 Uvicorn started로 정상 시작됨.
+- 화면 로딩이 길면 앱 시작 시 외부 API 호출/무거운 계산이 화면 표시를 막는 구조일 가능성이 큼.
+
+이번 수정:
+1. 앱 시작 시 Sportmonks API 자동 호출 완전 차단
+2. football_fixtures.py는 안전 샘플 1건만 즉시 반환
+3. Sportmonks API는 버튼을 눌렀을 때만 호출
+4. API 호출 timeout 12초 제한
+5. 진단 패널은 lazy import
+6. 실패해도 앱 전체가 멈추지 않고 화면에 원인 표시
+7. tests/self_test_safe_boot.py 추가
+8. GitHub Actions safe_boot_self_test.yml 추가
+
+확인 순서:
+1. 앱이 먼저 빠르게 떠야 정상
+2. 화면에서 'Sportmonks API 지금 테스트' 버튼 클릭
+3. 결과의 http_status / data_count / response_preview로 원인 확인

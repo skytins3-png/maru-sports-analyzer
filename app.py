@@ -18,7 +18,6 @@ from ui.dual_engine_panel import render_dual_engine_panel
 from ui.live_score_panel import render_live_score_panel
 from ui.data_collection_panel import render_data_collection_panel
 from sports.toto_adapter import analyze_fixture_with_dual_engine
-
 try:
     from ui.sportmonks_diagnostic_panel import render_sportmonks_diagnostic_panel
 except Exception as _diag_error:
@@ -26,6 +25,7 @@ except Exception as _diag_error:
         import streamlit as st
         st.error("Sportmonks 진단 패널 import 실패")
         st.code(str(_diag_error), language="text")
+
 
 
 patch_streamlit_dataframe(st)
@@ -123,7 +123,6 @@ def main():
 
     log_event("app_run", {"fixtures": len(fixtures), "recommendations": len(recommendations)})
     st.divider()
-    render_sportmonks_diagnostic_panel()
     st.divider()
     render_data_collection_panel(config, fixtures, snapshots, analyses, recommendations)
 

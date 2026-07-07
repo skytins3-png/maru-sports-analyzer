@@ -1,20 +1,18 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, List, Optional, Tuple
-
 import requests
+from datetime import datetime, timezone, timedelta
+from typing import Any, Dict, List, Tuple, Optional
 
 KST = timezone(timedelta(hours=9))
-
 DEFAULT_DATE_URL = "https://api.sportmonks.com/v3/football/fixtures/date/{today_dash}?api_token={api_key}&include=participants;league"
 DEFAULT_BETWEEN_URL = "https://api.sportmonks.com/v3/football/fixtures/between/{from_dash}/{to_dash}?api_token={api_key}&include=participants;league"
 
 LAST_COLLECTION_INFO: Dict[str, Any] = {
-    "source": "not_started",
+    "source": "manual_only",
     "ok": False,
-    "message": "아직 수집 전",
+    "message": "안전부팅 모드: 앱 시작 시 API 자동수집 안 함. 버튼을 눌러 수동 테스트.",
     "http_status": "",
     "count": 0,
     "data_count": 0,
@@ -41,7 +39,7 @@ def _read_secret(name: str, default: str = "") -> str:
     if value:
         return value
     try:
-        import streamlit as st  # imported lazily only inside Streamlit runtime
+        import streamlit as st
         return str(st.secrets.get(name, default))
     except Exception:
         return default
@@ -63,32 +61,21 @@ def _mask_url(url: str, token: str) -> str:
 
 
 def _preview(obj: Any, limit: int = 1200) -> str:
-    try:
-        return str(obj)[:limit]
-    except Exception:
-        return ""
+    return str(obj)[:limit]
 
 
 def _team_name(p: Dict[str, Any]) -> str:
-    return (
-        p.get("name")
-        or p.get("short_code")
-        or p.get("display_name")
-        or p.get("common_name")
-        or p.get("team_name")
-        or "Unknown"
-    )
+    return p.get("name") or p.get("short_code") or p.get("display_name") or p.get("common_name") or "Unknown"
 
 
-def _extract_participants(fixture: Dict[str, Any]) -> Tuple[str, str]:
-    participants = fixture.get("participants") or []
-    if isinstance(participants, dict):
-        participants = participants.get("data") or []
-    if not isinstance(participants, list):
-        participants = []
-
+def _participants(f: Dict[str, Any]) -> Tuple[str, str]:
+    ps = f.get("participants") or []
+    if isinstance(ps, dict):
+        ps = ps.get("data") or []
+    if not isinstance(ps, list):
+        ps = []
     home, away = "", ""
-    for p in participants:
+    for p in ps:
         if not isinstance(p, dict):
             continue
         loc = str((p.get("meta") or {}).get("location", "")).lower()
@@ -97,34 +84,25 @@ def _extract_participants(fixture: Dict[str, Any]) -> Tuple[str, str]:
             home = name
         elif loc == "away":
             away = name
-
-    if (not home or not away) and len(participants) >= 2:
-        names = [_team_name(p) for p in participants if isinstance(p, dict)]
+    if (not home or not away) and len(ps) >= 2:
+        names = [_team_name(p) for p in ps if isinstance(p, dict)]
         if names:
             home = home or names[0]
         if len(names) > 1:
             away = away or names[1]
-
     return home or "Home", away or "Away"
 
 
-def _league(fixture: Dict[str, Any]) -> str:
-    league = fixture.get("league") or {}
+def _league(f: Dict[str, Any]) -> str:
+    league = f.get("league") or {}
     if isinstance(league, dict):
         return league.get("name") or league.get("display_name") or league.get("short_code") or "Football"
     return "Football"
 
 
-def _status(fixture: Dict[str, Any]) -> str:
-    state = fixture.get("state") or fixture.get("status") or fixture.get("time_status") or fixture.get("result_info")
-    if isinstance(state, dict):
-        return state.get("name") or state.get("short_name") or "scheduled"
-    return str(state or "scheduled")
-
-
-def normalize_fixture(fixture: Dict[str, Any], idx: int = 1) -> Dict[str, Any]:
-    home, away = _extract_participants(fixture)
-    start = fixture.get("starting_at") or fixture.get("starting_at_timestamp") or ""
+def normalize_fixture(f: Dict[str, Any], idx: int = 1) -> Dict[str, Any]:
+    home, away = _participants(f)
+    start = f.get("starting_at") or f.get("starting_at_timestamp") or ""
     kickoff = str(start)
     if isinstance(start, int):
         try:
@@ -134,38 +112,42 @@ def normalize_fixture(fixture: Dict[str, Any], idx: int = 1) -> Dict[str, Any]:
     elif isinstance(start, str) and start:
         kickoff = start.replace("T", " ")
 
+    state = f.get("state") or f.get("status") or "scheduled"
+    if isinstance(state, dict):
+        state = state.get("name") or state.get("short_name") or "scheduled"
+
     return {
-        "match_id": str(fixture.get("id") or fixture.get("fixture_id") or f"SM_{today_dash()}_{idx:03d}"),
+        "match_id": str(f.get("id") or f"SM_{today_dash()}_{idx:03d}"),
         "date": today_dash(),
-        "league": _league(fixture),
+        "league": _league(f),
         "match_no": str(idx).zfill(3),
         "home_team": home,
         "away_team": away,
         "kickoff_kst": kickoff,
-        "status": _status(fixture),
+        "status": str(state),
         "data_source": "sportmonks",
-        "raw_id": fixture.get("id", ""),
-        "has_participants": bool(fixture.get("participants")),
+        "raw_id": f.get("id", ""),
+        "has_participants": bool(f.get("participants")),
     }
 
 
-def _call_url(url: str, token: str, source_name: str, timeout: int = 20) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+def _call_url(url: str, token: str, source_name: str, timeout: int = 12) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     safe_url = _mask_url(url, token)
     try:
         res = requests.get(url, timeout=timeout)
         try:
             payload = res.json()
         except Exception:
-            payload = {"text": getattr(res, "text", "")[:1200]}
+            payload = {"text": res.text[:1200]}
 
-        data: List[Any] = []
+        data = []
         if isinstance(payload, dict):
             raw = payload.get("data", [])
             data = raw if isinstance(raw, list) else []
         elif isinstance(payload, list):
             data = payload
 
-        fixtures: List[Dict[str, Any]] = []
+        fixtures = []
         if 200 <= res.status_code < 300:
             fixtures = [normalize_fixture(x, i + 1) for i, x in enumerate(data) if isinstance(x, dict)]
 
@@ -195,11 +177,14 @@ def _call_url(url: str, token: str, source_name: str, timeout: int = 20) -> Tupl
         }
 
 
-def fetch_sportmonks_fixtures(date_dash: Optional[str] = None, timeout: int = 20) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+def fetch_sportmonks_fixtures(date_dash: Optional[str] = None, timeout: int = 12) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """
+    수동 테스트 버튼에서만 호출해야 한다.
+    앱 시작/페이지 로드에서는 호출하지 않는다.
+    """
     global LAST_COLLECTION_INFO
     date_dash = date_dash or today_dash()
     token = get_token()
-
     if not token:
         info = {
             "source": "sportmonks",
@@ -252,7 +237,7 @@ def fetch_sportmonks_fixtures(date_dash: Optional[str] = None, timeout: int = 20
 
 def run_diagnostic_test() -> Dict[str, Any]:
     token = get_token()
-    fixtures, info = fetch_sportmonks_fixtures(timeout=20)
+    fixtures, info = fetch_sportmonks_fixtures(timeout=12)
     return {
         "token_detected": bool(token),
         "token_preview": token[:4] + "…" + token[-4:] if token and len(token) > 8 else ("있음" if token else "없음"),
