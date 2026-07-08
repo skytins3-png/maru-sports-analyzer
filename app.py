@@ -1,6 +1,7 @@
 import os
 import json
 import zipfile
+from pathlib import Path
 from io import StringIO, BytesIO
 from datetime import datetime, timezone, timedelta
 from difflib import SequenceMatcher
@@ -12,7 +13,7 @@ import streamlit as st
 
 KST = timezone(timedelta(hours=9))
 APP_NAME = "MARU SPORTS PROTO FIXTURE HUB"
-APP_VERSION = "v10-hub-setup-test"
+APP_VERSION = "v12-full-hub-visible"
 DATA_DIR = "data"
 LOG_DIR = "logs"
 PAYLOAD_DIR = "payloads"
@@ -50,6 +51,13 @@ OUTPUT_FILES = {
     "run_logs": f"{LOG_DIR}/run_logs.csv",
     "error_logs": f"{LOG_DIR}/error_logs.csv",
     "backend_diagnosis": f"{DATA_DIR}/backend_diagnosis_report.csv",
+    "missing_data_report": f"{DATA_DIR}/missing_data_report.csv",
+    "coach_status": f"{DATA_DIR}/coach_status.csv",
+    "injury_status": f"{DATA_DIR}/injury_status.csv",
+    "lineup_status": f"{DATA_DIR}/lineup_status.csv",
+    "transfer_status": f"{DATA_DIR}/transfer_status.csv",
+    "news_status": f"{DATA_DIR}/news_status.csv",
+    "proto_market_status": f"{DATA_DIR}/proto_market_status.csv",
     "hub_payload_latest": f"{PAYLOAD_DIR}/hub_payload_latest.json",
     "hub_payload_queue": f"{PAYLOAD_DIR}/hub_payload_queue.jsonl",
 }
@@ -84,6 +92,24 @@ MARKET_TEMPLATES = [
     {"market_type": "한경기구매", "line_value": "", "option_a": "단일", "option_b": "", "option_c": ""},
     {"market_type": "기타", "line_value": "", "option_a": "특수", "option_b": "", "option_c": ""},
 ]
+
+
+EMPTY_SCHEMAS = {
+    "standard_coaches": ["team", "coach", "coach_start_date", "tactics", "note", "status"],
+    "standard_transfers": ["team", "transfers", "scouting_note", "note", "status"],
+    "standard_injuries": ["team", "injuries", "missing_players", "note", "status"],
+    "standard_lineups": ["team", "lineup", "formation", "note", "status"],
+    "standard_news_flags": ["team", "news", "notice", "note", "status"],
+    "standard_markets": ["match_id", "league", "home_team", "away_team", "market_type", "line_value", "option_a", "option_b", "option_c", "source", "status"],
+    "missing_data_report": ["created_at", "match_id", "match", "league", "date", "kickoff_kst", "coach_status", "tactics_status", "injury_status", "suspension_status", "lineup_status", "transfer_scout_status", "news_notice_status", "proto_market_status", "overall_status", "missing_items"],
+    "coach_status": ["created_at", "match_id", "match", "home_team", "away_team", "home_coach_status", "away_coach_status", "home_tactics_status", "away_tactics_status"],
+    "injury_status": ["created_at", "match_id", "match", "home_team", "away_team", "home_injury_status", "away_injury_status", "home_missing_status", "away_missing_status"],
+    "lineup_status": ["created_at", "match_id", "match", "home_team", "away_team", "home_lineup_status", "away_lineup_status"],
+    "transfer_status": ["created_at", "match_id", "match", "home_team", "away_team", "home_transfer_status", "away_transfer_status", "home_scout_status", "away_scout_status"],
+    "news_status": ["created_at", "match_id", "match", "home_team", "away_team", "home_news_status", "away_news_status"],
+    "proto_market_status": ["created_at", "match_id", "match", "market_rows", "real_proto_rows", "template_rows", "status"],
+}
+
 
 COLUMN_MAP = {
     "Date": "date", "날짜": "date", "경기일": "date",
@@ -169,6 +195,11 @@ def read_csv(path: str) -> pd.DataFrame:
 def write_csv(path: str, df: pd.DataFrame):
     ensure_dirs()
     df = df.copy() if df is not None else pd.DataFrame()
+    # 빈 파일도 기본 컬럼을 유지해서 Google Sheet/진단에서 "안 받은 자료"가 눈에 보이게 한다.
+    if df.empty:
+        base = os.path.basename(path).replace(".csv", "")
+        if base in EMPTY_SCHEMAS:
+            df = pd.DataFrame(columns=EMPTY_SCHEMAS[base])
     df.to_csv(path, index=False, encoding="utf-8-sig")
 
 
@@ -225,6 +256,18 @@ def get_hub_url() -> str:
     return ""
 
 
+def get_google_sheet_url() -> str:
+    keys = ["GOOGLE_SHEET_URL", "google_sheet_url", "MARU_GOOGLE_SHEET_URL", "SHEET_URL"]
+    for key in keys:
+        try:
+            v = st.secrets.get(key, "")
+            if v:
+                return str(v)
+        except Exception:
+            pass
+    return ""
+
+
 def masked_url(value: str) -> str:
     value = clean(value)
     if not value:
@@ -235,18 +278,22 @@ def masked_url(value: str) -> str:
 
 
 def hub_secrets_status() -> Dict[str, Any]:
-    keys = ["GAS_WEBAPP_URL", "GOOGLE_SHEET_HUB_URL", "gas_webapp_url", "sheet_hub_url"]
+    hub_keys = ["GAS_WEBAPP_URL", "GOOGLE_SHEET_HUB_URL", "gas_webapp_url", "sheet_hub_url"]
+    sheet_keys = ["GOOGLE_SHEET_URL", "google_sheet_url", "MARU_GOOGLE_SHEET_URL", "SHEET_URL"]
     rows = []
     found = ""
-    for key in keys:
+    sheet_found = ""
+    for key in hub_keys + sheet_keys:
         try:
             value = st.secrets.get(key, "")
         except Exception:
             value = ""
-        if value and not found:
+        if key in hub_keys and value and not found:
             found = str(value)
+        if key in sheet_keys and value and not sheet_found:
+            sheet_found = str(value)
         rows.append({"secret_key": key, "set": "YES" if value else "NO", "preview": masked_url(str(value)) if value else ""})
-    return {"hub_url_on": bool(found), "hub_url_preview": masked_url(found), "rows": rows}
+    return {"hub_url_on": bool(found), "hub_url_preview": masked_url(found), "google_sheet_url_on": bool(sheet_found), "google_sheet_url_preview": masked_url(sheet_found), "rows": rows}
 
 
 def hub_setup_markdown() -> str:
@@ -273,7 +320,10 @@ Streamlit Cloud → 앱 → Settings → Secrets에 아래처럼 넣습니다.
 
 ```toml
 GAS_WEBAPP_URL = "복사한_구글_Apps_Script_웹앱_URL"
+GOOGLE_SHEET_URL = "구글시트_주소창의_docs.google.com/spreadsheets/d/.../edit_주소"
 ```
+
+`GAS_WEBAPP_URL`은 전송용이고, `GOOGLE_SHEET_URL`은 앱 안의 구글시트 바로가기 버튼용입니다.
 
 ## 7. 앱에서 확인
 앱의 `허브 전송` 탭에서 `허브 설정 검사`와 `허브 실제 전송 테스트`를 누릅니다.
@@ -283,7 +333,7 @@ GAS_WEBAPP_URL = "복사한_구글_Apps_Script_웹앱_URL"
 
 def validate_hub_payload(payload: Dict[str, Any]) -> Tuple[bool, List[str], Dict[str, Any]]:
     problems = []
-    required = ["app", "version", "type", "created_at", "counts", "diagnosis", "analysis_scores", "mobile_recommendations"]
+    required = ["app", "version", "type", "created_at", "counts", "diagnosis", "analysis_scores", "mobile_recommendations", "missing_data_report"]
     for key in required:
         if key not in payload:
             problems.append(f"payload 필수 키 없음: {key}")
@@ -304,6 +354,8 @@ def validate_hub_payload(payload: Dict[str, Any]) -> Tuple[bool, List[str], Dict
         "source_fixtures": payload.get("counts", {}).get("source_livescore_fixtures", 0) if isinstance(payload.get("counts", {}), dict) else 0,
         "standard_history": payload.get("counts", {}).get("standard_history_matches", 0) if isinstance(payload.get("counts", {}), dict) else 0,
         "hub_url": "ON" if get_hub_url() else "OFF",
+        "google_sheet_url": "ON" if get_google_sheet_url() else "OFF",
+        "missing_data_rows": len(payload.get("missing_data_report", [])) if isinstance(payload.get("missing_data_report", []), list) else -1,
     }
     return len(problems) == 0, problems, summary
 
@@ -692,6 +744,108 @@ def generate_markets(fixtures: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+
+def has_any_value(status: Dict[str, Any], keys: List[str]) -> bool:
+    if not status:
+        return False
+    return any(clean(status.get(k)) for k in keys)
+
+
+def status_text(ok: bool, label: str) -> str:
+    return "있음" if ok else f"{label} 없음"
+
+
+def build_missing_visibility_tables(fixtures: pd.DataFrame, coaches: pd.DataFrame, transfers: pd.DataFrame, injuries: pd.DataFrame, lineups: pd.DataFrame, news: pd.DataFrame, markets: pd.DataFrame) -> Dict[str, pd.DataFrame]:
+    """경기별로 안 받은 현재자료를 별도 표로 만든다. 추천보다 먼저 눈으로 확인하기 위한 허브용 진단표."""
+    rows_missing, rows_coach, rows_injury, rows_lineup, rows_transfer, rows_news, rows_proto = [], [], [], [], [], [], []
+    now = now_text()
+    if fixtures is None or fixtures.empty:
+        frames = {
+            "missing_data_report": pd.DataFrame(columns=EMPTY_SCHEMAS["missing_data_report"]),
+            "coach_status": pd.DataFrame(columns=EMPTY_SCHEMAS["coach_status"]),
+            "injury_status": pd.DataFrame(columns=EMPTY_SCHEMAS["injury_status"]),
+            "lineup_status": pd.DataFrame(columns=EMPTY_SCHEMAS["lineup_status"]),
+            "transfer_status": pd.DataFrame(columns=EMPTY_SCHEMAS["transfer_status"]),
+            "news_status": pd.DataFrame(columns=EMPTY_SCHEMAS["news_status"]),
+            "proto_market_status": pd.DataFrame(columns=EMPTY_SCHEMAS["proto_market_status"]),
+        }
+        for name, df in frames.items():
+            write_csv(OUTPUT_FILES[name], df)
+        return frames
+
+    for _, f in fixtures.iterrows():
+        mid = clean(f.get("match_id"))
+        home = clean(f.get("home_team")); away = clean(f.get("away_team"))
+        match = f"{home} vs {away}".strip(" vs ")
+        hcoach = find_manual_status(coaches, home); acoach = find_manual_status(coaches, away)
+        hinj = find_manual_status(injuries, home); ainj = find_manual_status(injuries, away)
+        hline = find_manual_status(lineups, home); aline = find_manual_status(lineups, away)
+        htrans = find_manual_status(transfers, home); atrans = find_manual_status(transfers, away)
+        hnews = find_manual_status(news, home); anews = find_manual_status(news, away)
+        coach_ok = has_any_value(hcoach, ["coach", "coach_start_date"]) or has_any_value(acoach, ["coach", "coach_start_date"])
+        tactics_ok = has_any_value(hcoach, ["tactics", "note"]) or has_any_value(acoach, ["tactics", "note"])
+        injury_ok = has_any_value(hinj, ["injuries", "note"]) or has_any_value(ainj, ["injuries", "note"])
+        missing_player_ok = has_any_value(hinj, ["missing_players"]) or has_any_value(ainj, ["missing_players"])
+        lineup_ok = has_any_value(hline, ["lineup", "formation", "note"]) or has_any_value(aline, ["lineup", "formation", "note"])
+        transfer_ok = has_any_value(htrans, ["transfers"]) or has_any_value(atrans, ["transfers"])
+        scout_ok = has_any_value(htrans, ["scouting_note", "note"]) or has_any_value(atrans, ["scouting_note", "note"])
+        news_ok = has_any_value(hnews, ["news", "notice", "note"]) or has_any_value(anews, ["news", "notice", "note"])
+        mdf = markets[markets["match_id"].astype(str) == mid] if markets is not None and not markets.empty and "match_id" in markets.columns else pd.DataFrame()
+        real_proto_rows = 0
+        template_rows = 0
+        if not mdf.empty and "source" in mdf.columns:
+            real_proto_rows = len(mdf[~mdf["source"].astype(str).str.contains("template_not_real_proto|market_template", na=False)])
+            template_rows = len(mdf) - real_proto_rows
+        proto_ok = real_proto_rows > 0
+        missing_items = []
+        checks = [
+            (coach_ok, "감독 취임일"), (tactics_ok, "감독 전술"), (injury_ok, "주전 부상"),
+            (missing_player_ok, "결장"), (lineup_ok, "예상 라인업"), ((transfer_ok or scout_ok), "영입/이적/스카우트"),
+            (news_ok, "뉴스/공지"), (proto_ok, "실제 프로토 기준점/배당"),
+        ]
+        for ok, label in checks:
+            if not ok:
+                missing_items.append(label)
+        base = {"created_at": now, "match_id": mid, "match": match, "league": clean(f.get("league")), "date": clean(f.get("date")), "kickoff_kst": clean(f.get("kickoff_kst"))}
+        rows_missing.append({**base,
+            "coach_status": status_text(coach_ok, "감독 취임일"), "tactics_status": status_text(tactics_ok, "감독 전술"),
+            "injury_status": status_text(injury_ok, "주전 부상"), "suspension_status": status_text(missing_player_ok, "결장"),
+            "lineup_status": status_text(lineup_ok, "예상 라인업"), "transfer_scout_status": status_text((transfer_ok or scout_ok), "영입/이적/스카우트"),
+            "news_notice_status": status_text(news_ok, "뉴스/공지"), "proto_market_status": "실제 기준점 있음" if proto_ok else "실제 프로토 기준점/배당 없음 - 템플릿",
+            "overall_status": "자료확인 필요" if missing_items else "현재자료 확인됨", "missing_items": " / ".join(missing_items)})
+        rows_coach.append({"created_at": now, "match_id": mid, "match": match, "home_team": home, "away_team": away,
+                           "home_coach_status": status_text(has_any_value(hcoach, ["coach", "coach_start_date"]), "감독 취임일"),
+                           "away_coach_status": status_text(has_any_value(acoach, ["coach", "coach_start_date"]), "감독 취임일"),
+                           "home_tactics_status": status_text(has_any_value(hcoach, ["tactics", "note"]), "감독 전술"),
+                           "away_tactics_status": status_text(has_any_value(acoach, ["tactics", "note"]), "감독 전술")})
+        rows_injury.append({"created_at": now, "match_id": mid, "match": match, "home_team": home, "away_team": away,
+                            "home_injury_status": status_text(has_any_value(hinj, ["injuries", "note"]), "주전 부상"),
+                            "away_injury_status": status_text(has_any_value(ainj, ["injuries", "note"]), "주전 부상"),
+                            "home_missing_status": status_text(has_any_value(hinj, ["missing_players"]), "결장"),
+                            "away_missing_status": status_text(has_any_value(ainj, ["missing_players"]), "결장")})
+        rows_lineup.append({"created_at": now, "match_id": mid, "match": match, "home_team": home, "away_team": away,
+                            "home_lineup_status": status_text(has_any_value(hline, ["lineup", "formation", "note"]), "예상 라인업"),
+                            "away_lineup_status": status_text(has_any_value(aline, ["lineup", "formation", "note"]), "예상 라인업")})
+        rows_transfer.append({"created_at": now, "match_id": mid, "match": match, "home_team": home, "away_team": away,
+                              "home_transfer_status": status_text(has_any_value(htrans, ["transfers"]), "영입/이적"),
+                              "away_transfer_status": status_text(has_any_value(atrans, ["transfers"]), "영입/이적"),
+                              "home_scout_status": status_text(has_any_value(htrans, ["scouting_note", "note"]), "스카우트"),
+                              "away_scout_status": status_text(has_any_value(atrans, ["scouting_note", "note"]), "스카우트")})
+        rows_news.append({"created_at": now, "match_id": mid, "match": match, "home_team": home, "away_team": away,
+                          "home_news_status": status_text(has_any_value(hnews, ["news", "notice", "note"]), "뉴스/공지"),
+                          "away_news_status": status_text(has_any_value(anews, ["news", "notice", "note"]), "뉴스/공지")})
+        rows_proto.append({"created_at": now, "match_id": mid, "match": match, "market_rows": len(mdf), "real_proto_rows": real_proto_rows,
+                           "template_rows": template_rows, "status": "실제 프로토 기준점 있음" if proto_ok else "실제 프로토 기준점/배당 없음 - 템플릿"})
+    frames = {
+        "missing_data_report": pd.DataFrame(rows_missing), "coach_status": pd.DataFrame(rows_coach),
+        "injury_status": pd.DataFrame(rows_injury), "lineup_status": pd.DataFrame(rows_lineup),
+        "transfer_status": pd.DataFrame(rows_transfer), "news_status": pd.DataFrame(rows_news),
+        "proto_market_status": pd.DataFrame(rows_proto),
+    }
+    for name, df in frames.items():
+        write_csv(OUTPUT_FILES[name], df)
+    return frames
+
 def find_manual_status(df: pd.DataFrame, team: str) -> Dict[str, str]:
     if df.empty or "team" not in df.columns:
         return {}
@@ -788,6 +942,7 @@ def run_standardize_and_analyze() -> Tuple[pd.DataFrame, pd.DataFrame, Dict[str,
     coaches, transfers, injuries, lineups, news = parse_manual_sources()
     markets = generate_markets(fixtures)
     tf, ha, hh = build_bigdata_tables(fixtures, history)
+    missing_frames = build_missing_visibility_tables(fixtures, coaches, transfers, injuries, lineups, news, markets)
 
     results = []
     if not fixtures.empty and not markets.empty:
@@ -800,7 +955,7 @@ def run_standardize_and_analyze() -> Tuple[pd.DataFrame, pd.DataFrame, Dict[str,
     write_csv(OUTPUT_FILES["analysis_scores"], analysis)
     write_csv(OUTPUT_FILES["mobile_recommendations"], mobile)
     diagnosis = build_diagnosis()
-    meta = {"fixtures_msg": fmsg, "history_msg": hmsg, "analysis_rows": len(analysis), "mobile_rows": len(mobile), "diagnosis": diagnosis}
+    meta = {"fixtures_msg": fmsg, "history_msg": hmsg, "analysis_rows": len(analysis), "mobile_rows": len(mobile), "diagnosis": diagnosis, "missing_data_rows": len(read_csv(OUTPUT_FILES["missing_data_report"]))}
     log_run("standardize_analyze", "ok", f"analysis={len(analysis)}, mobile={len(mobile)}", meta)
     return analysis, mobile, meta
 
@@ -816,18 +971,35 @@ def build_diagnosis() -> Dict[str, Any]:
     if counts.get("standard_injuries", 0) == 0: missing.append("부상/결장 자료 없음")
     if counts.get("standard_lineups", 0) == 0: missing.append("라인업 자료 없음")
     if counts.get("standard_markets", 0) == 0: missing.append("승부식 자료 없음")
-    return {"time": now_text(), "counts": counts, "missing": missing, "hub_url": "ON" if get_hub_url() else "OFF"}
+    if counts.get("missing_data_report", 0) == 0: missing.append("부족자료 진단표 없음")
+    missing_report = read_csv(OUTPUT_FILES.get("missing_data_report", ""))
+    missing_summary = {}
+    if not missing_report.empty:
+        for col in ["coach_status", "tactics_status", "injury_status", "suspension_status", "lineup_status", "transfer_scout_status", "news_notice_status", "proto_market_status"]:
+            if col in missing_report.columns:
+                missing_summary[col] = int(missing_report[col].astype(str).str.contains("없음|템플릿", na=False).sum())
+    return {"time": now_text(), "counts": counts, "missing": missing, "missing_summary": missing_summary, "hub_url": "ON" if get_hub_url() else "OFF", "google_sheet_url": "ON" if get_google_sheet_url() else "OFF"}
 
 
 def build_hub_payload(kind: str = "full_pipeline") -> Dict[str, Any]:
     counts = file_counts()
     payload = {
         "app": APP_NAME, "version": APP_VERSION, "type": kind, "created_at": now_text(),
+        "hub_webapp_url_status": "ON" if get_hub_url() else "OFF",
+        "google_sheet_url_status": "ON" if get_google_sheet_url() else "OFF",
+        "google_sheet_url_preview": masked_url(get_google_sheet_url()),
         "counts": counts,
         "diagnosis": build_diagnosis(),
         "analysis_scores": read_csv(OUTPUT_FILES["analysis_scores"]).tail(300).to_dict("records"),
         "mobile_recommendations": read_csv(OUTPUT_FILES["mobile_recommendations"]).tail(300).to_dict("records"),
         "hub_send_logs": read_csv(OUTPUT_FILES["hub_send_logs"]).tail(50).to_dict("records"),
+        "missing_data_report": read_csv(OUTPUT_FILES["missing_data_report"]).tail(300).to_dict("records"),
+        "coach_status": read_csv(OUTPUT_FILES["coach_status"]).tail(300).to_dict("records"),
+        "injury_status": read_csv(OUTPUT_FILES["injury_status"]).tail(300).to_dict("records"),
+        "lineup_status": read_csv(OUTPUT_FILES["lineup_status"]).tail(300).to_dict("records"),
+        "transfer_status": read_csv(OUTPUT_FILES["transfer_status"]).tail(300).to_dict("records"),
+        "news_status": read_csv(OUTPUT_FILES["news_status"]).tail(300).to_dict("records"),
+        "proto_market_status": read_csv(OUTPUT_FILES["proto_market_status"]).tail(300).to_dict("records"),
     }
     # include compact status for each file, not massive raw files
     payload["source_preview"] = {k: read_csv(v).head(5).to_dict("records") for k, v in SOURCE_FILES.items() if os.path.exists(v)}
@@ -849,7 +1021,7 @@ def save_hub_payload(payload: Dict[str, Any]) -> Tuple[str, str]:
 def send_to_hub(payload: Dict[str, Any]) -> Tuple[bool, str]:
     latest, queue = save_hub_payload(payload)
     url = get_hub_url()
-    base_log = {"time": now_text(), "payload_type": payload.get("type", ""), "payload_latest": latest, "payload_queue": queue, "rows_mobile": len(payload.get("mobile_recommendations", [])), "hub_url": "ON" if url else "OFF"}
+    base_log = {"time": now_text(), "payload_type": payload.get("type", ""), "payload_latest": latest, "payload_queue": queue, "rows_mobile": len(payload.get("mobile_recommendations", [])), "hub_url": "ON" if url else "OFF", "google_sheet_url": "ON" if get_google_sheet_url() else "OFF"}
     if not url:
         msg = "허브 URL OFF: 실제 전송 대신 payload 저장 완료"
         append_csv(OUTPUT_FILES["hub_send_logs"], pd.DataFrame([{**base_log, "status": "queued", "message": msg, "http_status": ""}]))
@@ -895,7 +1067,7 @@ def run_full_pipeline(auto_fixtures=True, auto_history=True, send_hub=True):
 def make_status_report() -> str:
     diag = build_diagnosis()
     counts = diag["counts"]
-    lines = [f"# {APP_NAME} 상태 리포트", "", f"- version: {APP_VERSION}", f"- time: {now_text()}", f"- hub_url: {diag['hub_url']}", "", "## 파일별 저장 건수"]
+    lines = [f"# {APP_NAME} 상태 리포트", "", f"- version: {APP_VERSION}", f"- time: {now_text()}", f"- hub_url: {diag['hub_url']}", f"- google_sheet_url: {diag.get('google_sheet_url','OFF')}", "", "## 파일별 저장 건수"]
     for k, v in counts.items():
         lines.append(f"- {k}: {v}")
     lines += ["", "## 부족자료"]
@@ -903,6 +1075,12 @@ def make_status_report() -> str:
         lines += [f"- {m}" for m in diag["missing"]]
     else:
         lines.append("- 큰 부족자료 없음")
+    lines += ["", "## 부족자료 상세표"]
+    miss_df = read_csv(OUTPUT_FILES["missing_data_report"]).tail(30)
+    if miss_df.empty:
+        lines.append("부족자료 상세표 없음")
+    else:
+        lines.append(miss_df.to_csv(index=False))
     lines += ["", "## 최근 모바일 추천"]
     mob = read_csv(OUTPUT_FILES["mobile_recommendations"]).tail(20)
     if mob.empty:
@@ -983,7 +1161,7 @@ def virtual_backend_test() -> Tuple[bool, str, Dict[str, Any]]:
 
 def render_download_bar(location: str):
     st.markdown("#### 📦 로그/허브 자료 받기")
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3, c4, c5 = st.columns(5)
     report = make_status_report().encode("utf-8-sig")
     bundle = make_log_bundle()
     with c1:
@@ -997,6 +1175,12 @@ def render_download_bar(location: str):
     with c4:
         hub_logs = read_csv(OUTPUT_FILES["hub_send_logs"]).to_csv(index=False).encode("utf-8-sig")
         st.download_button("📜 허브 전송 로그 받기", hub_logs, "hub_send_logs.csv", "text/csv", key=f"hublog_{location}")
+    with c5:
+        sheet_url = get_google_sheet_url()
+        if sheet_url:
+            st.link_button("📊 구글시트 열기", sheet_url)
+        else:
+            st.caption("시트 URL OFF")
 
 
 def render_metrics():
@@ -1033,7 +1217,7 @@ def render_full_run():
 
 
 def render_recent_outputs():
-    t1, t2, t3, t4 = st.tabs(["모바일 추천", "분석 점수", "허브 로그", "부족자료"])
+    t1, t2, t3, t4 = st.tabs(["모바일 추천", "분석 점수", "허브 로그", "부족자료 진단표"])
     with t1:
         df = read_csv(OUTPUT_FILES["mobile_recommendations"])
         st.dataframe(df.tail(100), width="stretch") if not df.empty else st.info("모바일 추천 없음")
@@ -1044,7 +1228,9 @@ def render_recent_outputs():
         df = read_csv(OUTPUT_FILES["hub_send_logs"])
         st.dataframe(df.tail(100), width="stretch") if not df.empty else st.info("허브 로그 없음")
     with t4:
+        miss = read_csv(OUTPUT_FILES["missing_data_report"])
         st.json(build_diagnosis())
+        st.dataframe(miss.tail(100), width="stretch") if not miss.empty else st.info("부족자료 진단표 없음")
 
 
 def render_fixture_tab():
@@ -1069,7 +1255,7 @@ def render_fixture_tab():
 
 def render_data_input_tab():
     st.subheader("🧾 자료 입력")
-    st.caption("감독 취임일, 영입/스카우트, 주전 부상, 결장, 라인업, 뉴스는 manual 자료로 보완합니다.")
+    st.caption("감독 취임일, 감독 전술, 영입/이적/스카우트, 주전 부상, 결장, 예상 라인업, 뉴스/공지는 manual 자료로 보완합니다. 안 받은 자료는 missing_data_report로 따로 표시됩니다.")
     sample = "team,coach,coach_start_date,injuries,missing_players,lineup,transfers,scouting_note,news,note\nArsenal,Mikel Arteta,2019-12-20,,,주전 확인 필요,영입 확인 필요,,뉴스 확인 필요,\nChelsea,,,주전 수비수 체크,1명 확인 필요,,이적생 출전 여부,,감독 인터뷰 확인,\n"
     text = st.text_area("manual CSV", value=sample, height=160)
     if st.button("manual 현재자료 저장", type="primary"):
@@ -1082,13 +1268,20 @@ def render_data_input_tab():
 
 def render_hub_tab():
     st.subheader("📤 허브/구글시트")
-    st.caption("전체실행 결과는 여기에서 구글시트 허브로 실제 전송하거나, URL이 없으면 payload 큐로 저장합니다.")
+    st.caption("전체실행 결과와 missing_data_report까지 구글시트 허브로 실제 전송하거나, URL이 없으면 payload 큐로 저장합니다.")
 
     status = hub_secrets_status()
-    m1, m2, m3 = st.columns(3)
+    m1, m2, m3, m4 = st.columns(4)
     m1.metric("허브 URL", "ON" if status["hub_url_on"] else "OFF")
-    m2.metric("Payload 최신", "ON" if os.path.exists(OUTPUT_FILES["hub_payload_latest"]) else "OFF")
-    m3.metric("전송 로그", len(read_csv(OUTPUT_FILES["hub_send_logs"])))
+    m2.metric("구글시트 바로가기", "ON" if status.get("google_sheet_url_on") else "OFF")
+    m3.metric("Payload 최신", "ON" if os.path.exists(OUTPUT_FILES["hub_payload_latest"]) else "OFF")
+    m4.metric("전송 로그", len(read_csv(OUTPUT_FILES["hub_send_logs"])))
+
+    sheet_url = get_google_sheet_url()
+    if sheet_url:
+        st.link_button("📊 구글시트 허브 바로가기", sheet_url)
+    else:
+        st.warning("GOOGLE_SHEET_URL Secret이 없어 앱 안에서 구글시트 바로가기 버튼을 열 수 없습니다. 전송은 GAS_WEBAPP_URL로 가능하지만, 바로가기는 GOOGLE_SHEET_URL을 추가해야 합니다.")
 
     with st.expander("① 구글시트 허브 설정법", expanded=not status["hub_url_on"]):
         st.markdown(hub_setup_markdown())
