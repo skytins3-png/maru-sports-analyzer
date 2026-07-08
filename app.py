@@ -5,10 +5,6 @@ import os
 import requests
 from datetime import datetime, timezone, timedelta
 
-# 🚨 urllib3 경고 로그(InsecureRequestWarning) 차단막 추가
-import urllib3
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
 from core.config import AppConfig
 from core.cache_manager import CacheManager
 from core.sheet_hub import SheetHub
@@ -81,7 +77,7 @@ def fetch_football_data_uk_csv():
     for league_code, league_name in target_leagues.items():
         csv_url = f"{base_url}{league_code}.csv"
         try:
-            response = requests.get(csv_url, timeout=7, verify=False)
+            response = requests.get(csv_url, timeout=7)
             if response.status_code == 200:
                 csv_data = response.content.decode('utf-8', errors='ignore')
                 from io import StringIO
@@ -116,7 +112,11 @@ def fetch_football_data_uk_csv():
                             "source": f"football_data_uk_{league_code}",
                             "match_id": f"uk_{league_code}_{formatted_date}_{str(row['HomeTeam'])[:3]}"
                         })
-        except Exception:
+        except requests.exceptions.SSLError as ssl_err:
+            log_event("football_data_uk_ssl_error", {"league": league_code, "error": str(ssl_err)})
+            continue
+        except Exception as err:
+            log_event("football_data_uk_fetch_error", {"league": league_code, "error": str(err)})
             continue
             
     return pd.DataFrame(standardized_rows)
