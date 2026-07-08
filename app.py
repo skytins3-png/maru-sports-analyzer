@@ -1,4 +1,5 @@
 import os
+import tempfile
 from io import StringIO
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Tuple
@@ -8,11 +9,13 @@ import requests
 import streamlit as st
 
 # ==========================================================
-# MARU SPORTS ANALYZER - PROTO FIXTURE HUB V3 ACTIONS
+# MARU SPORTS ANALYZER - PROTO FIXTURE HUB V5 BACKEND DIAGNOSIS
 # ----------------------------------------------------------
 # 사진 1: 라이브스코어/토토 일정표 = 경기 목록 기준만
 # 사진 2: 프로토 승부식 = 승무패/핸디/언오버/전반/더블찬스/SUM/승패/한경기조합/기타
 # 9. PC 모니터링과 전체실행에 실제 실행 버튼을 둔다.
+# 10. 일정표는 매일 수동 입력이 아니라 자동수집 버튼/Actions로 갱신한다.
+# 11. 허브/구글시트가 없어도 가상 백엔드 테스트와 payload 검사를 기본 탑재한다.
 # 원칙:
 # 1. 특정 사이트 하나에 의존하지 않는다.
 # 2. 라이브스코어는 일정표 기준만 사용한다.
@@ -85,6 +88,17 @@ MARKET_TEMPLATES = [
     {"market_type": "한경기구매", "market_label": "한경기 구매", "line": "단일경기", "choices": "가능|불가", "need": "구매방식"},
     {"market_type": "기타", "market_label": "기타", "line": "", "choices": "코너|카드|선수|특수", "need": "특수자료"},
 ]
+
+# TheSportsDB는 일정표 자동수집용 보조 source입니다.
+# 라이브스코어에 의존하지 않고, 오늘/예정 경기 목록을 자동으로 채우는 용도입니다.
+THESPORTSDB_DEFAULT_LEAGUES = {
+    "EPL": "4328",
+    "English Championship": "4329",
+    "German Bundesliga": "4331",
+    "Italian Serie A": "4332",
+    "French Ligue 1": "4334",
+    "Spanish La Liga": "4335",
+}
 
 COLUMN_MAP = {
     "날짜": "date", "경기일": "date", "일자": "date", "시간": "kickoff_kst", "킥오프": "kickoff_kst", "경기시간": "kickoff_kst",
@@ -249,6 +263,196 @@ def preview_df(df: pd.DataFrame, rows: int = 80) -> pd.DataFrame:
     if df.empty:
         return df
     return df.tail(rows)
+
+
+# ---------------------- 일정표 자동수집 ----------------------
+
+def secret_value(key: str, default: str = "") -> str:
+    try:
+        value = st.secrets.get(key, default)
+        return str(value) if value is not None else default
+    except Exception:
+        return default
+
+
+def parse_csv_list(text: str) -> List[str]:
+    return [x.strip() for x in clean_text(text).replace("\n", ",").split(",") if x.strip()]
+
+
+def parse_league_id_text(text: str) -> Dict[str, str]:
+    """입력 예: EPL=4328,LaLiga=4335 또는 4328,4335"""
+    out: Dict[str, str] = {}
+    for idx, item in enumerate(parse_csv_list(text)):
+        if "=" in item:
+            name, league_id = item.split("=", 1)
+            out[clean_text(name) or f"league_{idx+1}"] = clean_text(league_id)
+        else:
+            out[f"league_{idx+1}"] = clean_text(item)
+    return {k: v for k, v in out.items() if v}
+
+
+def kst_time_from_timestamp(timestamp_text: str, fallback_time: str = "") -> Tuple[str, str]:
+    ts = clean_text(timestamp_text)
+    if ts:
+        try:
+            dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            dt_kst = dt.astimezone(KST)
+            return dt_kst.strftime("%Y-%m-%d"), dt_kst.strftime("%H:%M")
+        except Exception:
+            pass
+    return "", clean_text(fallback_time)[:5]
+
+
+def normalize_thesportsdb_events(events: List[Dict], source_name: str = "thesportsdb_schedule") -> pd.DataFrame:
+    rows = []
+    for ev in events or []:
+        home = clean_text(ev.get("strHomeTeam"))
+        away = clean_text(ev.get("strAwayTeam"))
+        if not home or not away:
+            continue
+        date_from_ts, time_from_ts = kst_time_from_timestamp(ev.get("strTimestamp"), ev.get("strTime"))
+        date = date_from_ts or normalize_date(ev.get("dateEvent"))
+        kickoff = time_from_ts or clean_text(ev.get("strTime"))[:5]
+        if not date:
+            continue
+        status_raw = clean_text(ev.get("strStatus")) or clean_text(ev.get("strProgress")) or "SCHEDULED"
+        home_score = clean_text(ev.get("intHomeScore"))
+        away_score = clean_text(ev.get("intAwayScore"))
+        # 일정표 source는 예정 경기 중심. 종료/점수 있는 경기는 현재 추천 대상에서 제외되도록 저장만 하되 status를 유지.
+        status = "SCHEDULED" if (not home_score and not away_score and not is_finished_status(status_raw)) else status_raw
+        match_id = clean_text(ev.get("idEvent")) or f"tsdb_{date}_{home}_{away}".replace(" ", "_")
+        rows.append({
+            "match_id": match_id,
+            "date": date,
+            "kickoff_kst": kickoff,
+            "sport": clean_text(ev.get("strSport")) or "축구",
+            "country": clean_text(ev.get("strCountry")),
+            "league": clean_text(ev.get("strLeague")),
+            "home_team": home,
+            "away_team": away,
+            "status": status,
+            "source": source_name,
+            "home_score": home_score,
+            "away_score": away_score,
+            "odds_home": "",
+            "odds_draw": "",
+            "odds_away": "",
+            "collected_at": now_kst(),
+        })
+    return pd.DataFrame(rows)
+
+
+def fetch_thesportsdb_next_league(league_ids: Dict[str, str], api_key: str = "123", timeout: int = 15) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    rows, logs = [], []
+    api_key = clean_text(api_key) or "123"
+    for league_name, league_id in league_ids.items():
+        url = f"https://www.thesportsdb.com/api/v1/json/{api_key}/eventsnextleague.php?id={league_id}"
+        log = {"time": now_kst(), "source": "thesportsdb_schedule", "league_name": league_name, "league_id": league_id, "url": url.replace(api_key, "***"), "ok": "N", "rows": 0, "message": ""}
+        try:
+            res = requests.get(url, timeout=timeout, headers={"User-Agent": "MARU-Sports-Analyzer/fixture-auto"})
+            log["http_status"] = str(res.status_code)
+            if res.status_code != 200:
+                log["message"] = f"HTTP {res.status_code}"
+                logs.append(log)
+                continue
+            data = res.json()
+            events = data.get("events") or data.get("event") or []
+            df = normalize_thesportsdb_events(events, source_name=f"thesportsdb_nextleague_{league_id}")
+            if not df.empty:
+                rows.append(df)
+                log["ok"] = "Y"
+                log["rows"] = len(df)
+                log["message"] = "일정표 변환 성공"
+            else:
+                log["message"] = "변환 가능한 일정 없음"
+            logs.append(log)
+        except Exception as exc:
+            log["message"] = str(exc)[:300]
+            logs.append(log)
+    out = pd.concat(rows, ignore_index=True).drop_duplicates(subset=["match_id"], keep="last") if rows else pd.DataFrame()
+    return out, pd.DataFrame(logs)
+
+
+def normalize_custom_fixture_payload(payload, source_name: str) -> pd.DataFrame:
+    if isinstance(payload, list):
+        return normalize_thesportsdb_events(payload, source_name=source_name)
+    if isinstance(payload, dict):
+        for key in ["events", "event", "fixtures", "matches", "data"]:
+            value = payload.get(key)
+            if isinstance(value, list):
+                # 먼저 TheSportsDB 형태를 시도하고, 실패하면 일반 컬럼 매핑으로 처리.
+                tsdb_df = normalize_thesportsdb_events(value, source_name=source_name)
+                if not tsdb_df.empty:
+                    return tsdb_df
+                return normalize_columns(pd.DataFrame(value))
+    return pd.DataFrame()
+
+
+def fetch_custom_fixture_urls(urls: List[str], timeout: int = 15) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    rows, logs = [], []
+    for url in urls:
+        safe_url = url.split("?")[0] + ("?..." if "?" in url else "")
+        log = {"time": now_kst(), "source": "custom_fixture_url", "url": safe_url, "ok": "N", "rows": 0, "message": ""}
+        try:
+            res = requests.get(url, timeout=timeout, headers={"User-Agent": "MARU-Sports-Analyzer/fixture-auto"})
+            log["http_status"] = str(res.status_code)
+            if res.status_code != 200:
+                log["message"] = f"HTTP {res.status_code}"
+                logs.append(log)
+                continue
+            content_type = res.headers.get("content-type", "").lower()
+            if "json" in content_type or res.text.strip().startswith(("{", "[")):
+                df = normalize_custom_fixture_payload(res.json(), source_name="custom_fixture_url")
+            else:
+                df = normalize_columns(pd.read_csv(StringIO(res.content.decode("utf-8", errors="ignore"))))
+            if not df.empty and "match_id" not in df.columns:
+                df["match_id"] = [f"auto_{normalize_date(r.get('date'))}_{clean_text(r.get('home_team'))}_{clean_text(r.get('away_team'))}".replace(" ", "_") for _, r in df.iterrows()]
+            if not df.empty:
+                df = add_source_meta(df, "custom_fixture_url")
+                rows.append(df)
+                log["ok"] = "Y"
+                log["rows"] = len(df)
+                log["message"] = "일정표 변환 성공"
+            else:
+                log["message"] = "변환 가능한 일정 없음"
+            logs.append(log)
+        except Exception as exc:
+            log["message"] = str(exc)[:300]
+            logs.append(log)
+    out = pd.concat(rows, ignore_index=True).drop_duplicates(subset=["match_id"], keep="last") if rows else pd.DataFrame()
+    return out, pd.DataFrame(logs)
+
+
+def quick_collect_fixtures(league_ids: Dict[str, str] = None, custom_urls: List[str] = None) -> Tuple[int, int, pd.DataFrame]:
+    """버튼/GitHub Actions 실행용: 일정표를 자동 수집해 source_livescore_fixtures.csv에 저장."""
+    league_ids = league_ids or parse_league_id_text(secret_value("THESPORTSDB_LEAGUE_IDS", "")) or THESPORTSDB_DEFAULT_LEAGUES
+    api_key = secret_value("THESPORTSDB_API_KEY", "123")
+    custom_urls = custom_urls if custom_urls is not None else parse_csv_list(secret_value("AUTO_FIXTURE_URLS", ""))
+    frames, logs = [], []
+    if league_ids:
+        df_tsdb, log_tsdb = fetch_thesportsdb_next_league(league_ids, api_key=api_key)
+        if not df_tsdb.empty:
+            frames.append(df_tsdb)
+        if not log_tsdb.empty:
+            logs.append(log_tsdb)
+    if custom_urls:
+        df_custom, log_custom = fetch_custom_fixture_urls(custom_urls)
+        if not df_custom.empty:
+            frames.append(df_custom)
+        if not log_custom.empty:
+            logs.append(log_custom)
+    log_df = pd.concat(logs, ignore_index=True) if logs else pd.DataFrame()
+    if not log_df.empty:
+        merge_csv(OUTPUT_FILES["run_logs"], log_df, ["time", "source", "url"])
+    if not frames:
+        return 0, file_count(SOURCE_FILES["livescore_fixtures"]), log_df
+    df_all = pd.concat(frames, ignore_index=True).fillna("")
+    if "match_id" not in df_all.columns:
+        df_all["match_id"] = [f"auto_{normalize_date(r.get('date'))}_{clean_text(r.get('home_team'))}_{clean_text(r.get('away_team'))}".replace(" ", "_") for _, r in df_all.iterrows()]
+    added, total = merge_csv(SOURCE_FILES["livescore_fixtures"], df_all, ["match_id", "date", "home_team", "away_team"])
+    return added, total, log_df
 
 # ---------------------- football-data ----------------------
 
@@ -685,25 +889,35 @@ def quick_build_pipeline() -> Dict[str, int]:
 def render_action_buttons(prefix: str = "quick") -> None:
     """PC/전체실행 공통 실행 버튼 묶음."""
     st.markdown("### 실행 버튼")
-    st.caption("앱 시작 시 자동수집은 하지 않습니다. 아래 버튼을 눌렀을 때만 실행합니다.")
-    c1, c2, c3, c4 = st.columns(4)
+    st.caption("앱 시작 시 자동수집은 하지 않습니다. 아래 버튼 또는 GitHub Actions가 실행할 때만 갱신합니다.")
+    c0, c1, c2, c3, c4 = st.columns(5)
+    with c0:
+        if st.button("① 일정표 자동수집", type="primary", key=f"{prefix}_collect_fixtures"):
+            with st.spinner("일정표 자동수집 중... TheSportsDB/설정 URL을 검사합니다."):
+                added, total, logs = quick_collect_fixtures()
+            if total:
+                st.success(f"일정표 source 저장 완료: 신규/정리 {added}건 · 전체 {total}건")
+            else:
+                st.warning("저장된 일정표가 없습니다. 수집 로그 또는 source URL 설정을 확인하세요.")
+            with st.expander("일정표 수집 로그", expanded=True):
+                st.dataframe(preview_df(logs, 200), width="stretch")
     with c1:
-        if st.button("① 과거자료 자동수집", type="primary", key=f"{prefix}_collect_history"):
+        if st.button("② 과거자료 자동수집", type="primary", key=f"{prefix}_collect_history"):
             with st.spinner("football-data 시즌/리그/URL 자동 탐색 중..."):
                 added, total, logs = quick_collect_football_data()
             if total:
                 st.success(f"과거자료 source 저장 완료: 신규/정리 {added}건 · 전체 {total}건")
             else:
                 st.warning("저장된 과거자료가 없습니다. 탐색 로그를 확인하세요.")
-            with st.expander("수집 로그", expanded=False):
+            with st.expander("과거자료 수집 로그", expanded=False):
                 st.dataframe(preview_df(logs, 200), width="stretch")
     with c2:
-        if st.button("② source → standard 변환", type="primary", key=f"{prefix}_standardize"):
+        if st.button("③ source → standard", type="primary", key=f"{prefix}_standardize"):
             result = run_standardize_all()
             st.success("표준화 완료")
             st.dataframe(pd.DataFrame([{"파일": k, "건수": v} for k, v in result.items()]), width="stretch")
     with c3:
-        if st.button("③ 승부식 분석/모바일 생성", type="primary", key=f"{prefix}_analysis"):
+        if st.button("④ 분석/모바일 생성", type="primary", key=f"{prefix}_analysis"):
             analysis, mobile = run_analysis()
             if analysis.empty:
                 st.warning("분석 결과가 없습니다. 일정표/승부식/현재자료를 먼저 저장하세요. 과거자료만으로 추천하지 않습니다.")
@@ -711,13 +925,13 @@ def render_action_buttons(prefix: str = "quick") -> None:
                 st.success(f"분석 완료: analysis {len(analysis)}건 · mobile {len(mobile)}건")
                 show_mobile_cards()
     with c4:
-        if st.button("④ 전체 실행", type="primary", key=f"{prefix}_run_all"):
-            with st.spinner("과거자료 수집 → 표준화 → 분석 → 모바일 추천 생성 중..."):
-                added, total, logs = quick_collect_football_data()
+        if st.button("⑤ 전체 실행", type="primary", key=f"{prefix}_run_all"):
+            with st.spinner("일정표 수집 → 과거자료 수집 → 표준화 → 분석 → 모바일 추천 생성 중..."):
+                fx_added, fx_total, fx_logs = quick_collect_fixtures()
+                hist_added, hist_total, hist_logs = quick_collect_football_data()
                 result = quick_build_pipeline()
-            st.success(f"전체 실행 완료 · 과거자료 source {total}건 · 모바일 {result.get('mobile_recommendations', 0)}건")
+            st.success(f"전체 실행 완료 · 일정표 source {fx_total}건 · 과거자료 source {hist_total}건 · 모바일 {result.get('mobile_recommendations', 0)}건")
             st.dataframe(pd.DataFrame([{"파일": k, "건수": v} for k, v in result.items()]), width="stretch")
-
 
 def tab_run_all() -> None:
     st.subheader("전체실행")
@@ -731,7 +945,7 @@ def tab_run_all() -> None:
     c3.metric("모바일 추천", file_count(OUTPUT_FILES["mobile_recommendations"]))
     with st.expander("필수 진행 순서", expanded=True):
         st.markdown("""
-        1. **일정표 탭**에서 오늘/예정 경기 저장  
+        1. **전체실행 → 일정표 자동수집**으로 오늘/예정 경기 갱신  
         2. **승부식 탭**에서 실제 승부식/기준점 저장 또는 예정경기 기준 승부식 생성  
         3. **자료 입력 탭**에서 감독·부상·라인업·뉴스 저장  
         4. **전체실행**에서 과거자료 수집/표준화/분석 실행  
@@ -746,7 +960,7 @@ def header() -> None:
       <div style="font-size:34px;font-weight:900;">⚽ 마루 스포츠 분석가</div>
       <div style="font-size:15px;color:#6b7280;margin-top:6px;">일정표 기준 → 수집원별 저장 → 표준화 → 승부식 분석 → 모바일 추천카드 → 허브/구글시트</div>
       <div style="margin-top:10px;padding:12px 14px;border-radius:14px;background:#f9fafb;border:1px solid #e5e7eb;font-size:14px;line-height:1.6;">
-        <b>원칙:</b> 라이브스코어는 일정표 기준만 · 한 사이트 의존 금지 · football-data는 과거자료 보조 · 감독/부상/라인업/뉴스는 source별 보완 · 자동구매/자동결제 없음
+        <b>원칙:</b> 일정표는 자동수집 우선 · 라이브스코어는 일정표 기준만 · 한 사이트 의존 금지 · football-data는 과거자료 보조 · 감독/부상/라인업/뉴스는 source별 보완 · 자동구매/자동결제 없음
       </div>
     </div>
     """, unsafe_allow_html=True)
@@ -812,7 +1026,23 @@ def csv_input_block(label: str, sample: str, key: str) -> pd.DataFrame:
 
 def tab_fixtures() -> None:
     st.subheader("일정표")
-    st.caption("라이브스코어/토토 화면은 경기 일정표 기준만 사용합니다. 분석 의존 자료가 아닙니다.")
+    st.caption("라이브스코어/토토 화면은 경기 일정표 기준만 사용합니다. 매일 수동 입력하지 않도록 자동수집을 먼저 둡니다.")
+    st.markdown("### 일정표 자동수집")
+    st.info("기본은 TheSportsDB 리그별 예정경기 API를 사용합니다. 필요하면 Streamlit Secrets에 THESPORTSDB_LEAGUE_IDS 또는 AUTO_FIXTURE_URLS를 넣어 다른 일정표 URL도 자동으로 붙일 수 있습니다.")
+    league_text = st.text_area("자동수집 리그 ID", value=", ".join([f"{k}={v}" for k, v in THESPORTSDB_DEFAULT_LEAGUES.items()]), height=80)
+    custom_url_text = st.text_area("추가 일정표 URL 선택 입력", value=secret_value("AUTO_FIXTURE_URLS", ""), height=70, placeholder="CSV/JSON 일정표 URL을 줄바꿈 또는 쉼표로 입력")
+    if st.button("일정표 자동수집 실행", type="primary", key="fixture_auto_collect_tab"):
+        with st.spinner("일정표 자동수집 중..."):
+            added, total, logs = quick_collect_fixtures(parse_league_id_text(league_text), parse_csv_list(custom_url_text))
+        if total:
+            st.success(f"일정표 source 저장 완료: 신규/정리 {added}건 · 전체 {total}건")
+        else:
+            st.warning("자동수집된 일정표가 없습니다. 리그 ID/API 키/URL을 확인하세요.")
+        with st.expander("일정표 자동수집 로그", expanded=True):
+            st.dataframe(preview_df(logs, 200), width="stretch")
+    st.divider()
+    st.markdown("### 수동 보완 입력")
+    st.caption("자동수집에서 빠진 경기만 보완합니다. 매일 전체를 수동으로 넣는 용도가 아닙니다.")
     sample = """date,kickoff_kst,sport,league,home_team,away_team,status,source,match_id,odds_home,odds_draw,odds_away
 2026-07-10,20:00,축구,K리그1,울산,전북,SCHEDULED,livescore_copy,ls_001,1.90,3.25,3.80
 2026-07-10,22:00,축구,K리그1,서울,포항,SCHEDULED,livescore_copy,ls_002,2.10,3.10,3.20
@@ -986,10 +1216,183 @@ def tab_hub() -> None:
     show_table(OUTPUT_FILES["hub_send_logs"], "hub_send_logs", 100)
 
 
+
+# ---------------------- 백엔드 진단 / 가상 테스트 ----------------------
+
+def source_required_fields(filename: str) -> List[str]:
+    mapping = {
+        SOURCE_FILES["livescore_fixtures"]: ["date", "home_team", "away_team"],
+        SOURCE_FILES["football_data"]: ["date", "home_team", "away_team", "home_score", "away_score"],
+        SOURCE_FILES["proto_markets"]: ["match_id", "market_type"],
+        SOURCE_FILES["manual"]: ["team"],
+    }
+    return mapping.get(filename, [])
+
+
+def diagnose_file(filename: str, group_name: str) -> Dict:
+    df = read_csv(filename)
+    required = source_required_fields(filename)
+    missing_cols = [c for c in required if c not in df.columns]
+    empty_shell = "Y" if (not df.empty and required and missing_cols) else "N"
+    if df.empty:
+        status = "EMPTY"
+        reason = "저장된 자료 없음"
+    elif missing_cols:
+        status = "SHELL_OR_BAD_COLUMNS"
+        reason = "필수 컬럼 부족: " + ", ".join(missing_cols)
+    else:
+        status = "OK"
+        reason = "읽기/필수 컬럼 확인"
+    return {
+        "time": now_kst(), "group": group_name, "filename": filename, "rows": len(df),
+        "columns": ", ".join(list(df.columns)[:30]), "required": ", ".join(required),
+        "missing_columns": ", ".join(missing_cols), "empty_shell": empty_shell,
+        "status": status, "reason": reason,
+    }
+
+
+def diagnose_current_data() -> pd.DataFrame:
+    rows = []
+    for group_name, group in [("source", SOURCE_FILES), ("standard", STANDARD_FILES), ("output", OUTPUT_FILES)]:
+        for _, filename in group.items():
+            rows.append(diagnose_file(filename, group_name))
+    report = pd.DataFrame(rows)
+    write_csv("backend_diagnosis_report.csv", report)
+    return report
+
+
+def mock_source_data() -> Dict[str, pd.DataFrame]:
+    today = datetime.now(KST).strftime("%Y-%m-%d")
+    fixtures = pd.DataFrame([
+        {"match_id":"mock_001","date":today,"kickoff_kst":"20:00","sport":"축구","league":"가상리그","home_team":"울산","away_team":"전북","status":"SCHEDULED","source":"virtual_test"},
+        {"match_id":"mock_002","date":today,"kickoff_kst":"22:00","sport":"축구","league":"가상리그","home_team":"서울","away_team":"포항","status":"SCHEDULED","source":"virtual_test"},
+    ])
+    history_rows = []
+    teams = [("울산","전북"),("서울","포항"),("울산","서울"),("전북","포항")]
+    for i in range(24):
+        home, away = teams[i % len(teams)]
+        history_rows.append({"match_id":f"hist_mock_{i}","date":f"2026-06-{(i%28)+1:02d}","league":"가상리그","home_team":home,"away_team":away,"home_score":str((i*2)%4),"away_score":str((i+1)%3),"status":"FT","source":"virtual_history"})
+    history = pd.DataFrame(history_rows)
+    markets = pd.DataFrame([
+        {"match_id":"mock_001","market_type":"승무패","line":"","choices":"홈승|무|원정승","source":"virtual_proto"},
+        {"match_id":"mock_001","market_type":"언더/오버","line":"2.5","choices":"언더|오버","source":"virtual_proto"},
+        {"match_id":"mock_001","market_type":"핸디캡","line":"+1.0","choices":"홈핸디|원정핸디","source":"virtual_proto"},
+        {"match_id":"mock_002","market_type":"승무패","line":"","choices":"홈승|무|원정승","source":"virtual_proto"},
+        {"match_id":"mock_002","market_type":"더블찬스","line":"","choices":"홈/무|무/원정","source":"virtual_proto"},
+    ])
+    manual = pd.DataFrame([
+        {"team":"울산","league":"가상리그","coach":"가상감독A","coach_start_date":"2026-03-01","transfers_in":"공격수A","transfers_out":"","scout_note":"신규 공격수 속도 우수","injuries":"","missing_players":"","suspended_players":"","key_injuries":"","formation":"4-2-3-1","expected_lineup":"주전 대부분 가능","key_players":"공격수A;미드필더B","recent5":"W-W-D-W-L","home_wins":"4","home_draws":"1","home_losses":"0","away_wins":"2","away_draws":"1","away_losses":"2","news":"주전 공격수 선발 가능","note":"가상 테스트"},
+        {"team":"전북","league":"가상리그","coach":"가상감독B","coach_start_date":"2025-11-10","transfers_in":"","transfers_out":"미드필더D","scout_note":"중원 약화","injuries":"수비수C","missing_players":"수비수C","suspended_players":"","key_injuries":"주전 수비 결장","formation":"4-3-3","expected_lineup":"수비진 변동","key_players":"공격수E","recent5":"L-D-W-L-L","home_wins":"2","home_draws":"1","home_losses":"2","away_wins":"1","away_draws":"1","away_losses":"3","news":"주전 수비수 부상 결장","note":"가상 테스트"},
+        {"team":"서울","league":"가상리그","coach":"가상감독C","coach_start_date":"2026-01-20","transfers_in":"윙어K","transfers_out":"","scout_note":"측면 강화","injuries":"","missing_players":"","suspended_players":"","key_injuries":"","formation":"4-4-2","expected_lineup":"정상","key_players":"윙어K","recent5":"W-D-W-D-W","home_wins":"3","home_draws":"2","home_losses":"0","away_wins":"2","away_draws":"2","away_losses":"1","news":"라인업 정상","note":"가상 테스트"},
+        {"team":"포항","league":"가상리그","coach":"가상감독D","coach_start_date":"2024-09-01","transfers_in":"","transfers_out":"공격수Z","scout_note":"득점력 저하 가능","injuries":"공격수M","missing_players":"공격수M","suspended_players":"","key_injuries":"주전 공격 결장","formation":"3-5-2","expected_lineup":"공격수 대체","key_players":"수비수N","recent5":"L-L-D-W-L","home_wins":"1","home_draws":"2","home_losses":"2","away_wins":"1","away_draws":"0","away_losses":"4","news":"공격수 부상","note":"가상 테스트"},
+    ])
+    h2h = pd.DataFrame([
+        {"match_id":"mock_001","home_team":"울산","away_team":"전북","league":"가상리그","h2h_note":"최근 맞대결 홈 우세","home_h2h_wins":"3","draws":"1","away_h2h_wins":"1","source":"virtual_h2h"},
+        {"match_id":"mock_002","home_team":"서울","away_team":"포항","league":"가상리그","h2h_note":"서울 근소 우세","home_h2h_wins":"2","draws":"2","away_h2h_wins":"1","source":"virtual_h2h"},
+    ])
+    news = manual[["team", "league", "news", "note"]].copy()
+    return {
+        SOURCE_FILES["livescore_fixtures"]: fixtures,
+        SOURCE_FILES["football_data"]: history,
+        SOURCE_FILES["proto_markets"]: markets,
+        SOURCE_FILES["manual"]: manual,
+        SOURCE_FILES["livescore_h2h"]: h2h,
+        SOURCE_FILES["livescore_news"]: news,
+        SOURCE_FILES["livescore_team_form"]: manual,
+    }
+
+
+def run_virtual_backend_test() -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """허브/구글시트가 아직 없어도 전체 흐름을 가상 데이터로 검증한다. 실제 data 폴더는 건드리지 않는다."""
+    global DATA_DIR
+    original_dir = DATA_DIR
+    checks = []
+    with tempfile.TemporaryDirectory() as tmp:
+        DATA_DIR = tmp
+        ensure_data_dir()
+        for filename, df in mock_source_data().items():
+            write_csv(filename, df)
+            checks.append({"step":"mock_source_write","target":filename,"ok":"Y","rows":len(df),"message":"가상 source 저장"})
+        standard_counts = run_standardize_all()
+        for name, rows in standard_counts.items():
+            checks.append({"step":"standardize","target":name,"ok":"Y" if rows else "N","rows":rows,"message":"standard 변환"})
+        analysis, mobile = run_analysis()
+        checks.append({"step":"analysis","target":"analysis_scores.csv","ok":"Y" if len(analysis) else "N","rows":len(analysis),"message":"승부식별 분석 생성"})
+        checks.append({"step":"mobile","target":"mobile_recommendations.csv","ok":"Y" if len(mobile) else "N","rows":len(mobile),"message":"모바일 추천카드 생성"})
+        payload = {"app":"MARU SPORTS ANALYZER","type":"dry_run_mobile_recommendations","created_at":now_kst(),"data":{"rows":mobile.to_dict(orient="records")}}
+        payload_ok = bool(payload["data"]["rows"] and {"match_id","market_type","pick","confidence","risk","data_quality"}.issubset(set(mobile.columns)))
+        checks.append({"step":"hub_dry_run","target":"payload_shape","ok":"Y" if payload_ok else "N","rows":len(payload["data"]["rows"]),"message":"허브 payload 구조 검사"})
+        diag = diagnose_current_data()
+        DATA_DIR = original_dir
+    return pd.DataFrame(checks), preview_df(analysis, 20), preview_df(mobile, 20)
+
+
+def missing_data_summary() -> pd.DataFrame:
+    fixtures = read_csv(STANDARD_FILES["upcoming_fixtures"])
+    if fixtures.empty:
+        return pd.DataFrame([{"item":"예정경기","status":"MISSING","message":"standard_upcoming_fixtures.csv 0건: 일정표 자동수집/표준화 필요"}])
+    checks = [
+        ("승부식", STANDARD_FILES["markets"], "standard_markets.csv"),
+        ("과거자료", STANDARD_FILES["history_matches"], "standard_history_matches.csv"),
+        ("감독 취임일", STANDARD_FILES["coaches"], "standard_coaches.csv"),
+        ("주전 부상/결장", STANDARD_FILES["injuries"], "standard_injuries.csv"),
+        ("예상 라인업", STANDARD_FILES["lineups"], "standard_lineups.csv"),
+        ("영입/이적/스카우트", STANDARD_FILES["transfers"], "standard_transfers.csv"),
+        ("뉴스/공지", STANDARD_FILES["news_flags"], "standard_news_flags.csv"),
+        ("상대전적", STANDARD_FILES["h2h"], "standard_h2h.csv"),
+        ("홈/원정 흐름", STANDARD_FILES["team_home_away"], "standard_team_home_away.csv"),
+    ]
+    rows = []
+    for label, filename, full in checks:
+        cnt = file_count(filename)
+        rows.append({"item": label, "status": "OK" if cnt else "MISSING", "rows": cnt, "message": full + (" 확인됨" if cnt else " 없음")})
+    return pd.DataFrame(rows)
+
+
+def tab_backend_diagnosis() -> None:
+    st.subheader("백엔드 진단 / 가상 테스트")
+    st.caption("구글시트/허브 설정이 없어도 가상 데이터로 수집→표준화→분석→모바일추천→허브 payload까지 검사합니다.")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        if st.button("현재 저장자료 진단", type="primary"):
+            report = diagnose_current_data()
+            st.success("현재 자료 진단 완료")
+            st.dataframe(report, width="stretch")
+    with c2:
+        if st.button("가상 백엔드 전체 테스트", type="primary"):
+            checks, analysis, mobile = run_virtual_backend_test()
+            if (checks["ok"] == "N").any():
+                st.warning("가상 테스트에서 실패 단계가 있습니다.")
+            else:
+                st.success("가상 테스트 통과: source→standard→analysis→mobile→hub dry-run")
+            st.dataframe(checks, width="stretch")
+            with st.expander("가상 analysis_scores", expanded=False):
+                st.dataframe(analysis, width="stretch")
+            with st.expander("가상 mobile_recommendations", expanded=True):
+                st.dataframe(mobile, width="stretch")
+    with c3:
+        if st.button("부족자료 목록 확인", type="primary"):
+            st.dataframe(missing_data_summary(), width="stretch")
+    st.divider()
+    st.markdown("### 허브 상태")
+    st.metric("허브 URL", "ON" if get_hub_url() else "OFF")
+    st.info("허브 URL이 OFF여도 dry-run payload 검사는 가능합니다. 실제 구글시트 쓰기만 OFF입니다.")
+    if st.button("허브 실제 전송 테스트"):
+        payload = {"diagnosis": diagnose_current_data().to_dict(orient="records"), "missing": missing_data_summary().to_dict(orient="records")}
+        ok, msg = send_hub("backend_diagnosis", payload)
+        log_hub_result("backend_diagnosis", ok, msg, len(payload["diagnosis"]))
+        if ok:
+            st.success(msg)
+        else:
+            st.warning(msg)
+    with st.expander("최근 진단 리포트", expanded=False):
+        show_table("backend_diagnosis_report.csv", "backend_diagnosis_report", 100)
+
+
 def main() -> None:
     st.set_page_config(page_title="마루 스포츠 분석가", page_icon="⚽", layout="wide", initial_sidebar_state="collapsed")
     ensure_data_dir(); header(); metric_board(); st.divider()
-    tabs = st.tabs(["전체실행", "PC 모니터링", "일정표", "승부식", "수집원 관리", "자료 입력", "표준화/분석", "모바일 추천", "허브 전송"])
+    tabs = st.tabs(["전체실행", "PC 모니터링", "일정표", "승부식", "수집원 관리", "자료 입력", "표준화/분석", "모바일 추천", "허브 전송", "백엔드 진단"])
     with tabs[0]: tab_run_all()
     with tabs[1]: tab_pc_monitor()
     with tabs[2]: tab_fixtures()
@@ -999,6 +1402,7 @@ def main() -> None:
     with tabs[6]: tab_standard_analysis()
     with tabs[7]: tab_mobile()
     with tabs[8]: tab_hub()
+    with tabs[9]: tab_backend_diagnosis()
     st.divider(); st.caption(f"현재 시간: {now_kst()} · 라이브스코어는 일정표 기준만 · 자동구매/자동결제 없음")
 
 
