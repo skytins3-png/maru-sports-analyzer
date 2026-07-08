@@ -1,90 +1,62 @@
-/**
- * MARU SPORTS ANALYZER Google Apps Script Hub
- * Web App으로 배포 후 GAS_WEBAPP_URL에 입력.
- *
- * 권장 Sheet 탭:
- * config
- * fixtures
- * team_static_cache
- * pre_match_cache
- * odds_cache
- * injury_cache
- * lineup_cache
- * recommendations
- * match_results
- * analysis_history
- * mobile_recommend
- * live_score
- * logs
- */
+function doGet(e) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  ensureSheets_(ss);
+  return ContentService
+    .createTextOutput(JSON.stringify({ok:true, app:'MARU SPORTS HUB', message:'hub alive', time:new Date()}))
+    .setMimeType(ContentService.MimeType.JSON);
+}
 
 function doPost(e) {
-  try {
-    var body = JSON.parse(e.postData.contents);
-    var type = body.type || "logs";
-    var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  ensureSheets_(ss);
+  var raw = e && e.postData && e.postData.contents ? e.postData.contents : '{}';
+  var data = JSON.parse(raw);
 
-    if (type === "mobile_recommend
- * live_score") {
-      writeMobileRecommend(ss, body);
-    } else {
-      writeLog(ss, body);
-    }
+  writeSheet_(ss, 'hub_payload_log', [{
+    received_at: new Date(),
+    app: data.app || '',
+    version: data.version || '',
+    type: data.type || '',
+    created_at: data.created_at || '',
+    mobile_count: (data.mobile_recommendations || []).length,
+    analysis_count: (data.analysis_scores || []).length,
+    raw_json: raw.substring(0, 45000)
+  }]);
 
-    return ContentService
-      .createTextOutput(JSON.stringify({ok: true}))
-      .setMimeType(ContentService.MimeType.JSON);
+  writeSheet_(ss, 'mobile_recommendations', data.mobile_recommendations || []);
+  writeSheet_(ss, 'analysis_scores', data.analysis_scores || []);
+  writeSheet_(ss, 'hub_send_logs_remote', data.hub_send_logs || []);
+  writeSheet_(ss, 'diagnosis', [data.diagnosis || {}]);
+  writeSheet_(ss, 'counts', [data.counts || {}]);
 
-  } catch (err) {
-    return ContentService
-      .createTextOutput(JSON.stringify({ok: false, error: String(err)}))
-      .setMimeType(ContentService.MimeType.JSON);
-  }
+  return ContentService
+    .createTextOutput(JSON.stringify({ok:true, received_at: new Date(), mobile_count:(data.mobile_recommendations||[]).length, analysis_count:(data.analysis_scores||[]).length}))
+    .setMimeType(ContentService.MimeType.JSON);
 }
 
-function getOrCreateSheet(ss, name) {
-  var sh = ss.getSheetByName(name);
-  if (!sh) sh = ss.insertSheet(name);
-  return sh;
-}
-
-function writeMobileRecommend(ss, body) {
-  var sh = getOrCreateSheet(ss, "mobile_recommend
- * live_score");
-  sh.clearContents();
-
-  var headers = [
-    "rank", "match_id", "league", "match_no", "title",
-    "kickoff_kst", "main_pick", "sub_pick",
-    "confidence", "risk", "summary",
-    "auto_purchase", "auto_payment", "user_must_choose", "updated_at"
-  ];
-
-  sh.appendRow(headers);
-
-  var rows = body.rows || [];
-  rows.forEach(function(r, idx) {
-    sh.appendRow([
-      idx + 1,
-      r.match_id || "",
-      r.league || "",
-      r.match_no || "",
-      r.title || "",
-      r.kickoff_kst || "",
-      r.main_pick || "",
-      r.sub_pick || "",
-      r.confidence || "",
-      r.risk || "",
-      r.summary || "",
-      r.auto_purchase || "NO",
-      r.auto_payment || "NO",
-      r.user_must_choose || "YES",
-      body.created_at || new Date()
-    ]);
+function ensureSheets_(ss) {
+  ['hub_payload_log','mobile_recommendations','analysis_scores','hub_send_logs_remote','diagnosis','counts'].forEach(function(name){
+    if (!ss.getSheetByName(name)) ss.insertSheet(name);
   });
 }
 
-function writeLog(ss, body) {
-  var sh = getOrCreateSheet(ss, "logs");
-  sh.appendRow([new Date(), JSON.stringify(body)]);
+function writeSheet_(ss, name, rows) {
+  var sh = ss.getSheetByName(name) || ss.insertSheet(name);
+  if (!rows || rows.length === 0) return;
+  var keys = [];
+  rows.forEach(function(r){ Object.keys(flatten_(r)).forEach(function(k){ if(keys.indexOf(k) < 0) keys.push(k); }); });
+  if (sh.getLastRow() === 0) sh.appendRow(keys);
+  var values = rows.map(function(r){ var f = flatten_(r); return keys.map(function(k){ return f[k] === undefined ? '' : f[k]; }); });
+  sh.getRange(sh.getLastRow()+1, 1, values.length, keys.length).setValues(values);
+}
+
+function flatten_(obj, prefix, out) {
+  out = out || {}; prefix = prefix || '';
+  if (obj === null || obj === undefined) return out;
+  Object.keys(obj).forEach(function(k){
+    var v = obj[k]; var key = prefix ? prefix + '.' + k : k;
+    if (typeof v === 'object' && !Array.isArray(v) && v !== null) flatten_(v, key, out);
+    else out[key] = Array.isArray(v) ? JSON.stringify(v) : v;
+  });
+  return out;
 }

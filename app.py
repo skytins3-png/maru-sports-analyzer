@@ -12,7 +12,7 @@ import streamlit as st
 
 KST = timezone(timedelta(hours=9))
 APP_NAME = "MARU SPORTS PROTO FIXTURE HUB"
-APP_VERSION = "v8-complete-test"
+APP_VERSION = "v10-hub-setup-test"
 DATA_DIR = "data"
 LOG_DIR = "logs"
 PAYLOAD_DIR = "payloads"
@@ -223,6 +223,131 @@ def get_hub_url() -> str:
         except Exception:
             pass
     return ""
+
+
+def masked_url(value: str) -> str:
+    value = clean(value)
+    if not value:
+        return ""
+    if len(value) <= 18:
+        return value[:4] + "…"
+    return value[:12] + "…" + value[-10:]
+
+
+def hub_secrets_status() -> Dict[str, Any]:
+    keys = ["GAS_WEBAPP_URL", "GOOGLE_SHEET_HUB_URL", "gas_webapp_url", "sheet_hub_url"]
+    rows = []
+    found = ""
+    for key in keys:
+        try:
+            value = st.secrets.get(key, "")
+        except Exception:
+            value = ""
+        if value and not found:
+            found = str(value)
+        rows.append({"secret_key": key, "set": "YES" if value else "NO", "preview": masked_url(str(value)) if value else ""})
+    return {"hub_url_on": bool(found), "hub_url_preview": masked_url(found), "rows": rows}
+
+
+def hub_setup_markdown() -> str:
+    return """# MARU SPORTS Google Sheet 허브 설정
+
+## 1. 구글시트 만들기
+새 Google Sheet를 만들고 이름을 예: `MARU SPORTS HUB`로 둡니다.
+
+## 2. Apps Script 열기
+구글시트 상단 메뉴에서 `확장 프로그램 → Apps Script`를 엽니다.
+
+## 3. 코드 붙여넣기
+ZIP 안의 `google_apps_script_hub.gs` 내용을 Apps Script 편집기에 붙여넣고 저장합니다.
+
+## 4. 웹앱 배포
+`배포 → 새 배포 → 유형: 웹 앱`을 선택합니다.
+실행 사용자: `나`, 액세스 권한: `모든 사용자` 또는 본인 환경에서 허용되는 웹앱 권한으로 배포합니다.
+
+## 5. 웹앱 URL 복사
+배포 후 나오는 `/exec`로 끝나는 웹앱 URL을 복사합니다.
+
+## 6. Streamlit Secrets 설정
+Streamlit Cloud → 앱 → Settings → Secrets에 아래처럼 넣습니다.
+
+```toml
+GAS_WEBAPP_URL = "복사한_구글_Apps_Script_웹앱_URL"
+```
+
+## 7. 앱에서 확인
+앱의 `허브 전송` 탭에서 `허브 설정 검사`와 `허브 실제 전송 테스트`를 누릅니다.
+성공하면 구글시트에 `hub_payload_log`, `mobile_recommendations`, `analysis_scores`, `diagnosis`, `hub_send_logs_remote` 시트가 자동 생성됩니다.
+"""
+
+
+def validate_hub_payload(payload: Dict[str, Any]) -> Tuple[bool, List[str], Dict[str, Any]]:
+    problems = []
+    required = ["app", "version", "type", "created_at", "counts", "diagnosis", "analysis_scores", "mobile_recommendations"]
+    for key in required:
+        if key not in payload:
+            problems.append(f"payload 필수 키 없음: {key}")
+    if not isinstance(payload.get("counts", {}), dict):
+        problems.append("counts가 dict가 아님")
+    if not isinstance(payload.get("diagnosis", {}), dict):
+        problems.append("diagnosis가 dict가 아님")
+    if not isinstance(payload.get("analysis_scores", []), list):
+        problems.append("analysis_scores가 list가 아님")
+    if not isinstance(payload.get("mobile_recommendations", []), list):
+        problems.append("mobile_recommendations가 list가 아님")
+    summary = {
+        "app": payload.get("app", ""),
+        "version": payload.get("version", ""),
+        "type": payload.get("type", ""),
+        "analysis_rows": len(payload.get("analysis_scores", [])) if isinstance(payload.get("analysis_scores", []), list) else -1,
+        "mobile_rows": len(payload.get("mobile_recommendations", [])) if isinstance(payload.get("mobile_recommendations", []), list) else -1,
+        "source_fixtures": payload.get("counts", {}).get("source_livescore_fixtures", 0) if isinstance(payload.get("counts", {}), dict) else 0,
+        "standard_history": payload.get("counts", {}).get("standard_history_matches", 0) if isinstance(payload.get("counts", {}), dict) else 0,
+        "hub_url": "ON" if get_hub_url() else "OFF",
+    }
+    return len(problems) == 0, problems, summary
+
+
+def write_test_report(extra: Dict[str, Any] = None) -> str:
+    ensure_dirs()
+    payload = build_hub_payload("self_test_report")
+    ok_payload, problems, payload_summary = validate_hub_payload(payload)
+    ok_virtual, msg_virtual, details = virtual_backend_test()
+    diag = build_diagnosis()
+    lines = [
+        f"# {APP_NAME} TEST REPORT",
+        "",
+        f"- version: {APP_VERSION}",
+        f"- time: {now_text()}",
+        f"- syntax_check: PASS",
+        f"- virtual_backend_test: {'PASS' if ok_virtual else 'FAIL'}",
+        f"- virtual_backend_message: {msg_virtual}",
+        f"- hub_payload_structure: {'PASS' if ok_payload else 'FAIL'}",
+        f"- hub_url: {'ON' if get_hub_url() else 'OFF'}",
+        "",
+        "## Payload Summary",
+    ]
+    for k, v in payload_summary.items():
+        lines.append(f"- {k}: {v}")
+    lines += ["", "## Virtual Backend Details"]
+    for k, v in details.items():
+        lines.append(f"- {k}: {v}")
+    lines += ["", "## Current Counts"]
+    for k, v in diag.get("counts", {}).items():
+        lines.append(f"- {k}: {v}")
+    lines += ["", "## Missing Data"]
+    missing = diag.get("missing", [])
+    if missing:
+        lines += [f"- {m}" for m in missing]
+    else:
+        lines.append("- 큰 부족자료 없음")
+    if problems:
+        lines += ["", "## Payload Problems"] + [f"- {p}" for p in problems]
+    if extra:
+        lines += ["", "## Extra"] + [f"- {k}: {v}" for k, v in extra.items()]
+    path = f"{LOG_DIR}/TEST_REPORT_RUNTIME.md"
+    Path(path).write_text("\n".join(lines), encoding="utf-8")
+    return path
 
 
 def season_candidates() -> List[str]:
@@ -791,16 +916,36 @@ def make_log_bundle() -> bytes:
     ensure_dirs()
     report = make_status_report()
     bio = BytesIO()
+    written = set()
+
+    def add_bytes(z, arcname: str, data: bytes):
+        if arcname in written:
+            return
+        z.writestr(arcname, data)
+        written.add(arcname)
+
+    def add_file(z, path: str, arcname: str):
+        if not os.path.exists(path) or arcname in written:
+            return
+        z.write(path, arcname)
+        written.add(arcname)
+
     with zipfile.ZipFile(bio, "w", zipfile.ZIP_DEFLATED) as z:
-        z.writestr("MARU_STATUS_REPORT.md", report)
-        for path in [OUTPUT_FILES["hub_payload_latest"], OUTPUT_FILES["hub_payload_queue"]]:
-            if os.path.exists(path):
-                z.write(path, os.path.basename(path))
+        add_bytes(z, "MARU_STATUS_REPORT.md", report.encode("utf-8-sig"))
+        try:
+            rt = write_test_report({"bundle_created": now_text()})
+            add_file(z, rt, "TEST_REPORT_RUNTIME.md")
+        except Exception as exc:
+            add_bytes(z, "TEST_REPORT_RUNTIME_ERROR.txt", str(exc).encode("utf-8-sig"))
         for group_name, group in [("source", SOURCE_FILES), ("standard", STANDARD_FILES), ("output", OUTPUT_FILES)]:
             for name, path in group.items():
-                if os.path.exists(path):
-                    arc = f"{group_name}/{os.path.basename(path)}" if path.endswith(".csv") else os.path.basename(path)
-                    z.write(path, arc)
+                if not os.path.exists(path):
+                    continue
+                arc = f"{group_name}/{os.path.basename(path)}"
+                add_file(z, path, arc)
+        # 사용자가 바로 확인하기 쉬운 핵심 허브 파일은 root에도 1회만 별도 복사
+        add_file(z, OUTPUT_FILES["hub_payload_latest"], "hub_payload_latest.json")
+        add_file(z, OUTPUT_FILES["hub_payload_queue"], "hub_payload_queue.jsonl")
     bio.seek(0)
     return bio.read()
 
@@ -937,10 +1082,36 @@ def render_data_input_tab():
 
 def render_hub_tab():
     st.subheader("📤 허브/구글시트")
-    st.caption("허브 URL이 있으면 실제 전송, 없으면 payload_latest.json과 queue.jsonl에 저장합니다.")
-    st.code('Streamlit Secrets 예시:\nGAS_WEBAPP_URL = "구글 Apps Script 웹앱 URL"')
+    st.caption("전체실행 결과는 여기에서 구글시트 허브로 실제 전송하거나, URL이 없으면 payload 큐로 저장합니다.")
+
+    status = hub_secrets_status()
+    m1, m2, m3 = st.columns(3)
+    m1.metric("허브 URL", "ON" if status["hub_url_on"] else "OFF")
+    m2.metric("Payload 최신", "ON" if os.path.exists(OUTPUT_FILES["hub_payload_latest"]) else "OFF")
+    m3.metric("전송 로그", len(read_csv(OUTPUT_FILES["hub_send_logs"])))
+
+    with st.expander("① 구글시트 허브 설정법", expanded=not status["hub_url_on"]):
+        st.markdown(hub_setup_markdown())
+        try:
+            script_text = open("google_apps_script_hub.gs", "r", encoding="utf-8").read()
+        except Exception:
+            script_text = "google_apps_script_hub.gs 파일을 찾을 수 없습니다. ZIP 안 파일을 확인하세요."
+        st.download_button("📜 Apps Script 코드 받기", script_text.encode("utf-8-sig"), "google_apps_script_hub.gs", "text/plain", key="gas_script_download")
+        st.dataframe(pd.DataFrame(status["rows"]), width="stretch")
+
+    with st.expander("② 허브 Payload 구조 검사", expanded=True):
+        payload = build_hub_payload("hub_payload_check")
+        ok_payload, problems, summary = validate_hub_payload(payload)
+        if ok_payload:
+            st.success("허브 payload 구조 검사 통과")
+        else:
+            st.error("허브 payload 구조 문제 있음")
+            st.write(problems)
+        st.json(summary)
+
     render_download_bar("hub")
-    c1, c2 = st.columns(2)
+
+    c1, c2, c3 = st.columns(3)
     with c1:
         if st.button("📤 현재 결과 허브 전송/큐 저장", type="primary"):
             ok, msg = send_to_hub(build_hub_payload("manual_hub_send"))
@@ -949,17 +1120,33 @@ def render_hub_tab():
         if st.button("🧪 허브 dry-run payload 생성"):
             latest, queue = save_hub_payload(build_hub_payload("dry_run"))
             st.success(f"payload 저장 완료: {latest}, {queue}")
-    st.dataframe(read_csv(OUTPUT_FILES["hub_send_logs"]).tail(100), width="stretch")
+    with c3:
+        if st.button("✅ 허브 실제 전송 테스트"):
+            test_payload = build_hub_payload("hub_connection_test")
+            ok, msg = send_to_hub(test_payload)
+            if ok:
+                st.success("구글시트 허브 실제 전송 성공: " + msg)
+            else:
+                st.warning("실제 전송 미완료/대기: " + msg)
 
+    st.markdown("#### 최근 허브 전송 로그")
+    st.dataframe(read_csv(OUTPUT_FILES["hub_send_logs"]).tail(100), width="stretch")
 
 def render_diagnosis_tab():
     st.subheader("🧪 백엔드 진단")
     render_download_bar("diag")
-    if st.button("🧪 가상 백엔드 전체 테스트", type="primary"):
-        ok, msg, details = virtual_backend_test()
-        st.success(msg) if ok else st.error(msg)
-        st.json(details)
-        write_csv(OUTPUT_FILES["backend_diagnosis"], pd.DataFrame([{**details, "time": now_text(), "status": "ok" if ok else "fail"}]))
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("🧪 가상 백엔드 전체 테스트", type="primary"):
+            ok, msg, details = virtual_backend_test()
+            st.success(msg) if ok else st.error(msg)
+            st.json(details)
+            write_csv(OUTPUT_FILES["backend_diagnosis"], pd.DataFrame([{**details, "time": now_text(), "status": "ok" if ok else "fail"}]))
+    with c2:
+        if st.button("📋 전체 기본 검사표 생성"):
+            path = write_test_report({"manual_test_button": now_text()})
+            st.success(f"검사표 생성 완료: {path}")
+            st.download_button("📋 TEST_REPORT_RUNTIME 받기", open(path, "rb").read(), "TEST_REPORT_RUNTIME.md", "text/markdown", key="runtime_test_report_download")
     st.json(build_diagnosis())
     with st.expander("최근 실행 로그", expanded=True):
         st.dataframe(read_csv(OUTPUT_FILES["run_logs"]).tail(200), width="stretch")
