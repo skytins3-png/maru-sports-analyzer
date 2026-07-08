@@ -1,6 +1,7 @@
 import streamlit as st
 from core.display_safe import patch_streamlit_dataframe
 import pandas as pd
+import os
 from datetime import datetime, timezone, timedelta
 
 from core.config import AppConfig
@@ -19,23 +20,23 @@ from ui.live_score_panel import render_live_score_panel
 from ui.data_collection_panel import render_data_collection_panel
 from sports.toto_adapter import analyze_fixture_with_dual_engine
 from ui.history_store_panel import render_history_store_panel
+
+# 안전한 임포트 처리 및 패널 예외 방어
 try:
     from ui.history_range_test_panel import render_history_range_test_panel
 except Exception as _history_test_error:
     def render_history_range_test_panel():
-        import streamlit as st
         st.error("지난 경기 수집 테스트 패널 import 실패")
         st.code(str(_history_test_error), language="text")
+
 try:
     from ui.sportmonks_diagnostic_panel import render_sportmonks_diagnostic_panel
 except Exception as _diag_error:
     def render_sportmonks_diagnostic_panel():
-        import streamlit as st
         st.error("Sportmonks 진단 패널 import 실패")
         st.code(str(_diag_error), language="text")
 
-
-
+# 1. Streamlit 데이터프레임 패치 적용
 patch_streamlit_dataframe(st)
 
 KST = timezone(timedelta(hours=9))
@@ -55,29 +56,64 @@ def main():
 
     render_header()
 
+    # 사이드바 설정 영역
     with st.sidebar:
         st.subheader("MARU 설정")
-        app_mode = st.selectbox("앱 모드", ["축구 전용", "확장 준비"], index=0)
-        use_slow_api = st.toggle("느린 API 후순위 실행", value=config.use_slow_api)
-        save_to_sheet = st.toggle("Google Sheet 허브 저장", value=bool(config.gas_webapp_url))
+        app_mode = st.selectbox("앱 모드", ["축구 전용", "확장 준비"], index=0, key="maru_app_mode_select")
+        use_slow_api = st.toggle("느린 API 후순위 실행", value=config.use_slow_api, key="maru_slow_api_toggle")
+        save_to_sheet = st.toggle("Google Sheet 허브 저장", value=bool(config.gas_webapp_url), key="maru_sheet_save_toggle")
         st.caption("자동구매/자동결제 없음 · 사용자가 직접 선택")
 
     now_kst = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S KST")
 
-    fixtures = load_sample_fixtures()
+    # ==========================================
+    # 🔄 [핵심 변경] 무료 경기자료 데이터 수집 허브 로직
+    # ==========================================
+    fixtures = []
+    data_source_info = "로컬 저장소"
+
+    # 1순위: 마루님이 직접 붙여넣거나 캐싱된 실제 경기 데이터 로드 시도
+    history_csv_path = "cache/history_matches.csv"
+    if os.path.exists(history_csv_path):
+        try:
+            df_local = pd.read_csv(history_csv_path)
+            if not df_local.empty:
+                # ArrowTypeError 방지를 위해 '값' 또는 문자열 믹스 컬럼 타입 클리닝
+                if '값' in df_local.columns:
+                    df_local['값'] = df_local['값'].astype(str)
+                
+                # 가공 편의성을 위해 데이터프레임을 레코드 딕셔너리로 변환
+                fixtures = df_local.to_dict(orient="records")
+                data_source_info = f"실제 수집 데이터 ({len(fixtures)}건)"
+        except Exception as e:
+            st.sidebar.error(f"로컬 수집 허브 파일 로드 실패: {e}")
+
+    # 2순위: 만약 수집된 실데이터가 0건이라면 시스템 다운을 막기 위해 가이드 및 샘플 전환
+    is_sample_mode = False
+    if not fixtures:
+        fixtures = load_sample_fixtures()
+        is_sample_mode = True
+        data_source_info = "샘플 데이터 (실제 수집 데이터 없음)"
+        st.info("💡 현재 실제 수집된 경기 데이터(`cache/history_matches.csv`)가 없어 샘플 모드로 작동 중입니다. 수집센터에서 자료를 채워주세요.")
+
     recommendations = []
     snapshots = []
     analyses = []
 
-    for fixture in fixtures:
+    # 데이터 분석 및 스냅샷 빌드 루프
+    for idx, fixture in enumerate(fixtures):
+        # 복잡한 루프 내 위젯 중복 ID 충돌을 완벽히 방어하기 위해 idx 바인딩 권장
         snapshot = build_pre_match_snapshot(fixture, cache=cache, use_slow_api=use_slow_api)
         snapshots.append(snapshot)
+        
         analysis = analyze_match(fixture, snapshot)
         analyses.append(analysis)
+        
         rec = build_recommendations(fixture, snapshot, analysis)
         if rec:
             recommendations.append(rec)
 
+    # 대시보드 상태창 출력 (현재 데이터 소스 출처 명시)
     render_system_status(
         now_kst=now_kst,
         fixture_count=len(fixtures),
@@ -85,7 +121,9 @@ def main():
         slow_api=use_slow_api,
         sheet_enabled=save_to_sheet,
     )
+    st.caption(f"📊 **현재 활성화된 데이터 수집원:** {data_source_info}")
 
+    # UI 컴포넌트 배치
     st.divider()
     render_history_range_test_panel()
 
@@ -95,17 +133,33 @@ def main():
     st.divider()
     render_sportmonks_diagnostic_panel()
 
-    if recommendations:
+    # 결과 분석 카드 출력 혹은 자료부족 가드 활성화
+    if recommendations and not is_sample_mode:
         render_mobile_cards(recommendations)
+    elif is_sample_mode:
+        # 데이터가 가짜일 때는 사용자에게 가짜 데이터를 실데이터처럼 속여 보여주지 않고 가드 작동
+        render_empty_guard()
+        with st.expander("🛠️ [개발자용] 가짜 샘플 분석 결과 미리보기"):
+            if recommendations:
+                render_mobile_cards(recommendations)
     else:
         render_empty_guard()
 
+    # ==========================================
+    # 📊 데이터프레임 출력 파트 (Arrow 직렬화 예외 에러 완벽 방어)
+    # ==========================================
     st.divider()
     with st.expander("경기 원자료 보기"):
-        st.dataframe(pd.DataFrame(fixtures), width="stretch")
+        df_fix = pd.DataFrame(fixtures)
+        if '값' in df_fix.columns:
+            df_fix['값'] = df_fix['값'].astype(str)
+        st.dataframe(df_fix, width="stretch")
 
     with st.expander("추천 결과 원자료 보기"):
-        st.dataframe(pd.DataFrame(recommendations), width="stretch")
+        df_rec = pd.DataFrame(recommendations)
+        if '값' in df_rec.columns:
+            df_rec['값'] = df_rec['값'].astype(str)
+        st.dataframe(df_rec, width="stretch")
 
     with st.expander("기존 SKYTOTO 듀얼 엔진 자동 비교", expanded=False):
         dual_rows = []
@@ -113,19 +167,23 @@ def main():
             snapshot = build_pre_match_snapshot(fixture, cache=cache, use_slow_api=use_slow_api)
             dual = analyze_fixture_with_dual_engine(fixture, snapshot)
             dual_rows.append({
-                "match_id": fixture["match_id"],
-                "title": f'{fixture["home_team"]} vs {fixture["away_team"]}',
+                "match_id": fixture.get("match_id", "N/A"),
+                "title": f'{fixture.get("home_team", "Home")} vs {fixture.get("away_team", "Away")}',
                 "hub_pick": dual["hub"]["predicted_label"],
                 "sheet_pick": dual["sheet"]["predicted_label"],
                 "final": dual["compare"]["final"],
                 "avg_confidence": dual["compare"].get("avg_conf", 0),
                 "risk": dual["compare"].get("max_risk", 0),
             })
-        st.dataframe(pd.DataFrame(dual_rows), width="stretch")
+        df_dual = pd.DataFrame(dual_rows)
+        if '값' in df_dual.columns:
+            df_dual['값'] = df_dual['값'].astype(str)
+        st.dataframe(df_dual, width="stretch")
 
     render_dual_engine_panel()
 
-    if save_to_sheet and recommendations:
+    # 구글 시트 웹앱 전송 연동 파트
+    if save_to_sheet and recommendations and not is_sample_mode:
         payload = {
             "type": "mobile_recommend",
             "app": "MARU SPORTS ANALYZER",
@@ -139,7 +197,7 @@ def main():
             st.warning(f"Google Sheet 허브 저장 실패 또는 미설정: {msg}")
 
     log_event("app_run", {"fixtures": len(fixtures), "recommendations": len(recommendations)})
-    st.divider()
+    
     st.divider()
     render_data_collection_panel(config, fixtures, snapshots, analyses, recommendations)
 
