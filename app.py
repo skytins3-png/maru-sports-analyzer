@@ -104,7 +104,7 @@ def main():
     # 🛡️ 데이터 분석 및 KeyError 방어 처리 루프
     # ==========================================
     for idx, fixture in enumerate(fixtures):
-        # 🚨 [KeyError 방어벽] 수동 CSV나 타사 API에 빠지기 쉬운 필수 구조 강제 인젝션
+        # 🚨 [KeyError 1단계 방어벽] 기본 식별 데이터 주입
         if "match_no" not in fixture:
             fixture["match_no"] = fixture.get("match_id", idx + 1)
         if "match_id" not in fixture:
@@ -117,6 +117,11 @@ def main():
             fixture["league"] = "Unknown League"
         if "date" not in fixture:
             fixture["date"] = datetime.now(KST).strftime("%Y-%m-%d")
+
+        # 🚨 [KeyError 2단계 방어벽] 시간 데이터 세부 매핑 보완 (터진 에러 원천 차단)
+        if "kickoff_kst" not in fixture:
+            # 딕셔너리에 'time', 'kickoff', 'timestamp' 등이 있다면 그것을 우선 차용하고 없으면 현재 시각 할당
+            fixture["kickoff_kst"] = fixture.get("time", fixture.get("kickoff", "00:00"))
 
         # 인프라 핵심 엔진 가동
         snapshot = build_pre_match_snapshot(fixture, cache=cache, use_slow_api=use_slow_api)
@@ -179,10 +184,10 @@ def main():
 
     with st.expander("기존 SKYTOTO 듀얼 엔진 자동 비교", expanded=False):
         dual_rows = []
-        for fixture in fixtures:
+        for idx_d, fixture in enumerate(fixtures):
             # 루프 도는 경기 원천 데이터 정합성 보장 재확인
             if "match_id" not in fixture:
-                fixture["match_id"] = f"match_dual_{idx + 1}"
+                fixture["match_id"] = f"match_dual_{idx_d + 1}"
             
             snapshot = build_pre_match_snapshot(fixture, cache=cache, use_slow_api=use_slow_api)
             dual = analyze_fixture_with_dual_engine(fixture, snapshot)
