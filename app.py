@@ -13,7 +13,7 @@ import streamlit as st
 
 KST = timezone(timedelta(hours=9))
 APP_NAME = "MARU SPORTS PROTO FIXTURE HUB"
-APP_VERSION = "v12-full-hub-visible"
+APP_VERSION = "v13-sportmonks-diagnosis"
 DATA_DIR = "data"
 LOG_DIR = "logs"
 PAYLOAD_DIR = "payloads"
@@ -58,6 +58,7 @@ OUTPUT_FILES = {
     "transfer_status": f"{DATA_DIR}/transfer_status.csv",
     "news_status": f"{DATA_DIR}/news_status.csv",
     "proto_market_status": f"{DATA_DIR}/proto_market_status.csv",
+    "sportmonks_status": f"{DATA_DIR}/sportmonks_status.csv",
     "hub_payload_latest": f"{PAYLOAD_DIR}/hub_payload_latest.json",
     "hub_payload_queue": f"{PAYLOAD_DIR}/hub_payload_queue.jsonl",
 }
@@ -108,6 +109,7 @@ EMPTY_SCHEMAS = {
     "transfer_status": ["created_at", "match_id", "match", "home_team", "away_team", "home_transfer_status", "away_transfer_status", "home_scout_status", "away_scout_status"],
     "news_status": ["created_at", "match_id", "match", "home_team", "away_team", "home_news_status", "away_news_status"],
     "proto_market_status": ["created_at", "match_id", "match", "market_rows", "real_proto_rows", "template_rows", "status"],
+    "sportmonks_status": ["time", "provider", "enabled", "token_detected", "token_preview", "url_template", "safe_final_url", "http_status", "status", "response_data_count", "parsed_rows", "participants_parsed", "message", "response_preview"],
 }
 
 
@@ -266,6 +268,190 @@ def get_google_sheet_url() -> str:
         except Exception:
             pass
     return ""
+
+
+def get_secret_value(keys: List[str], default: str = "") -> str:
+    """Read one of several Streamlit Secret names without crashing outside Streamlit."""
+    for key in keys:
+        try:
+            v = st.secrets.get(key, "")
+            if v is not None and str(v).strip() != "":
+                return str(v).strip()
+        except Exception:
+            pass
+    return default
+
+
+def use_slow_api_enabled() -> bool:
+    v = get_secret_value(["USE_SLOW_API", "use_slow_api"], "N").upper()
+    return v in {"Y", "YES", "TRUE", "1", "ON"}
+
+
+def get_sportmonks_token() -> str:
+    return get_secret_value(["SPORTMONKS_API_TOKEN", "SPORTMONKS_API_KEY", "SPORTS_API_KEY", "sportmonks_api_token", "sports_api_key"], "")
+
+
+def get_sportmonks_url_template() -> str:
+    return get_secret_value([
+        "SKYTOTO_SPORTS_API_URL", "SPORTMONKS_API_URL", "sportmonks_api_url"
+    ], "https://api.sportmonks.com/v3/football/fixtures/between/{today_dash}/{to_dash}?api_token={api_key}&include=participants;league")
+
+
+def masked_secret(value: str) -> str:
+    value = clean(value)
+    if not value:
+        return ""
+    if len(value) <= 8:
+        return "****"
+    return value[:4] + "…" + value[-4:]
+
+
+def build_sportmonks_url() -> Tuple[str, str]:
+    token = get_sportmonks_token()
+    today = datetime.now(KST).date()
+    to_day = today + timedelta(days=7)
+    template = get_sportmonks_url_template()
+    final_url = template.replace("{today_dash}", today.isoformat()).replace("{to_dash}", to_day.isoformat()).replace("{api_key}", token)
+    safe_url = final_url.replace(token, masked_secret(token)) if token else final_url
+    return final_url, safe_url
+
+
+def sportmonks_secret_status() -> Dict[str, Any]:
+    token = get_sportmonks_token()
+    template = get_sportmonks_url_template()
+    return {
+        "enabled": "Y" if use_slow_api_enabled() else "N",
+        "token_detected": bool(token),
+        "token_preview": masked_secret(token),
+        "url_template": template,
+    }
+
+
+def extract_participant_name(p: Dict[str, Any]) -> str:
+    for key in ["name", "short_code", "display_name", "common_name"]:
+        val = clean(p.get(key))
+        if val:
+            return val
+    return ""
+
+
+def parse_sportmonks_fixture(item: Dict[str, Any]) -> Tuple[Dict[str, Any], int]:
+    participants = item.get("participants") or []
+    home = away = ""
+    participants_parsed = 0
+    if isinstance(participants, list):
+        for p in participants:
+            if not isinstance(p, dict):
+                continue
+            name = extract_participant_name(p)
+            if name:
+                participants_parsed += 1
+            meta = p.get("meta") or {}
+            loc = clean(meta.get("location") or meta.get("type") or p.get("location")).lower()
+            if loc == "home":
+                home = name
+            elif loc == "away":
+                away = name
+        if not home and len(participants) >= 1 and isinstance(participants[0], dict):
+            home = extract_participant_name(participants[0])
+        if not away and len(participants) >= 2 and isinstance(participants[1], dict):
+            away = extract_participant_name(participants[1])
+    league_obj = item.get("league") or {}
+    starting_at = clean(item.get("starting_at") or item.get("starting_at_timestamp") or item.get("date"))
+    date = normalize_date(starting_at[:10]) if starting_at else ""
+    kickoff = ""
+    if len(starting_at) >= 16 and ":" in starting_at:
+        kickoff = starting_at[11:16]
+    mid = clean(item.get("id") or item.get("fixture_id")) or f"sportmonks_{date}_{home}_{away}".replace(" ", "_")
+    row = {
+        "match_id": f"sm_{mid}",
+        "date": date,
+        "kickoff_kst": kickoff,
+        "sport": "축구",
+        "country": clean(item.get("country") or (league_obj.get("country") if isinstance(league_obj, dict) else "")),
+        "league": clean(league_obj.get("name") if isinstance(league_obj, dict) else item.get("league_name")),
+        "home_team": home,
+        "away_team": away,
+        "status": clean((item.get("state") or {}).get("name") if isinstance(item.get("state"), dict) else item.get("status")) or "SCHEDULED",
+        "source": "sportmonks",
+        "home_score": "",
+        "away_score": "",
+    }
+    return row, participants_parsed
+
+
+def fetch_sportmonks_fixtures() -> Tuple[pd.DataFrame, pd.DataFrame]:
+    status = sportmonks_secret_status()
+    final_url, safe_url = build_sportmonks_url()
+    log = {
+        "time": now_text(),
+        "provider": "sportmonks",
+        "enabled": status["enabled"],
+        "token_detected": status["token_detected"],
+        "token_preview": status["token_preview"],
+        "url_template": status["url_template"],
+        "safe_final_url": safe_url,
+        "http_status": "",
+        "status": "skipped",
+        "response_data_count": 0,
+        "parsed_rows": 0,
+        "participants_parsed": 0,
+        "message": "",
+        "response_preview": "",
+    }
+    if not use_slow_api_enabled():
+        log["message"] = "USE_SLOW_API=N 이라 Sportmonks 호출 생략"
+        write_csv(OUTPUT_FILES["sportmonks_status"], pd.DataFrame([log]))
+        return pd.DataFrame(), pd.DataFrame([log])
+    if not get_sportmonks_token():
+        log["status"] = "no_token"
+        log["message"] = "Sportmonks 키가 비어 있어 호출 생략"
+        write_csv(OUTPUT_FILES["sportmonks_status"], pd.DataFrame([log]))
+        return pd.DataFrame(), pd.DataFrame([log])
+    try:
+        r = requests.get(final_url, timeout=12, headers={"User-Agent": "MARU-Sports-Analyzer/13"})
+        log["http_status"] = str(r.status_code)
+        log["response_preview"] = r.text[:900]
+        if not (200 <= r.status_code < 300):
+            log["status"] = "http_error"
+            log["message"] = f"HTTP {r.status_code}"
+            write_csv(OUTPUT_FILES["sportmonks_status"], pd.DataFrame([log]))
+            log_error("fetch_sportmonks_fixtures", safe_url, log["message"])
+            return pd.DataFrame(), pd.DataFrame([log])
+        data = r.json()
+        items = data.get("data") if isinstance(data, dict) else []
+        if not isinstance(items, list):
+            items = []
+        log["response_data_count"] = len(items)
+        rows = []
+        participants_total = 0
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            row, pp = parse_sportmonks_fixture(item)
+            participants_total += pp
+            if row.get("date") and row.get("home_team") and row.get("away_team"):
+                rows.append(row)
+        log["parsed_rows"] = len(rows)
+        log["participants_parsed"] = participants_total
+        if len(items) == 0:
+            log["status"] = "empty_data"
+            log["message"] = "HTTP 성공, 하지만 data 0건: 날짜/플랜 범위/권한 확인 필요"
+        elif rows:
+            log["status"] = "ok"
+            log["message"] = f"Sportmonks parsed {len(rows)} rows"
+        else:
+            log["status"] = "parse_zero"
+            log["message"] = "data는 있으나 팀명/일정 파싱 0건: participants/include 구조 확인 필요"
+        df = pd.DataFrame(rows)
+        write_csv(OUTPUT_FILES["sportmonks_status"], pd.DataFrame([log]))
+        return df, pd.DataFrame([log])
+    except Exception as exc:
+        log["status"] = "exception"
+        log["message"] = str(exc)
+        write_csv(OUTPUT_FILES["sportmonks_status"], pd.DataFrame([log]))
+        log_error("fetch_sportmonks_fixtures", safe_url, str(exc))
+        return pd.DataFrame(), pd.DataFrame([log])
 
 
 def masked_url(value: str) -> str:
@@ -978,7 +1164,7 @@ def build_diagnosis() -> Dict[str, Any]:
         for col in ["coach_status", "tactics_status", "injury_status", "suspension_status", "lineup_status", "transfer_scout_status", "news_notice_status", "proto_market_status"]:
             if col in missing_report.columns:
                 missing_summary[col] = int(missing_report[col].astype(str).str.contains("없음|템플릿", na=False).sum())
-    return {"time": now_text(), "counts": counts, "missing": missing, "missing_summary": missing_summary, "hub_url": "ON" if get_hub_url() else "OFF", "google_sheet_url": "ON" if get_google_sheet_url() else "OFF"}
+    return {"time": now_text(), "counts": counts, "missing": missing, "missing_summary": missing_summary, "hub_url": "ON" if get_hub_url() else "OFF", "google_sheet_url": "ON" if get_google_sheet_url() else "OFF", "sportmonks": sportmonks_secret_status()}
 
 
 def build_hub_payload(kind: str = "full_pipeline") -> Dict[str, Any]:
@@ -1000,6 +1186,8 @@ def build_hub_payload(kind: str = "full_pipeline") -> Dict[str, Any]:
         "transfer_status": read_csv(OUTPUT_FILES["transfer_status"]).tail(300).to_dict("records"),
         "news_status": read_csv(OUTPUT_FILES["news_status"]).tail(300).to_dict("records"),
         "proto_market_status": read_csv(OUTPUT_FILES["proto_market_status"]).tail(300).to_dict("records"),
+        "sportmonks_status": read_csv(OUTPUT_FILES["sportmonks_status"]).tail(100).to_dict("records"),
+        "sportmonks_secret_status": sportmonks_secret_status(),
     }
     # include compact status for each file, not massive raw files
     payload["source_preview"] = {k: read_csv(v).head(5).to_dict("records") for k, v in SOURCE_FILES.items() if os.path.exists(v)}
@@ -1044,6 +1232,16 @@ def send_to_hub(payload: Dict[str, Any]) -> Tuple[bool, str]:
 def run_full_pipeline(auto_fixtures=True, auto_history=True, send_hub=True):
     report = []
     if auto_fixtures:
+        # 1) Sportmonks는 느린 API라 USE_SLOW_API=Y 및 키가 있을 때만 호출. 실패해도 기존 일정표 수집은 계속 진행.
+        sm_fx, sm_logs = fetch_sportmonks_fixtures()
+        sm_new, sm_total = append_csv(SOURCE_FILES["source_sportmonks"], sm_fx, ["match_id"])
+        if not sm_fx.empty:
+            append_csv(SOURCE_FILES["source_livescore_fixtures"], sm_fx, ["match_id"])
+        append_csv(OUTPUT_FILES["run_logs"], sm_logs.rename(columns={"status":"source_status"}) if not sm_logs.empty else pd.DataFrame())
+        report.append(f"Sportmonks 수집: 신규 {sm_new}, 전체 {sm_total} · {clean(sm_logs.iloc[-1].get('message')) if not sm_logs.empty else '로그 없음'}")
+        log_run("sportmonks_collect", "ok", report[-1])
+
+        # 2) 기존 TheSportsDB 일정표 자동수집은 그대로 유지
         fx, logs = fetch_thesportsdb_fixtures()
         n, total = append_csv(SOURCE_FILES["source_livescore_fixtures"], fx, ["match_id"])
         append_csv(OUTPUT_FILES["run_logs"], logs.rename(columns={"status":"source_status"}) if not logs.empty else pd.DataFrame())
@@ -1081,6 +1279,12 @@ def make_status_report() -> str:
         lines.append("부족자료 상세표 없음")
     else:
         lines.append(miss_df.to_csv(index=False))
+    lines += ["", "## Sportmonks 상태"]
+    sm_status = read_csv(OUTPUT_FILES["sportmonks_status"]).tail(20)
+    if sm_status.empty:
+        lines.append("Sportmonks 상태 로그 없음")
+    else:
+        lines.append(sm_status.to_csv(index=False))
     lines += ["", "## 최근 모바일 추천"]
     mob = read_csv(OUTPUT_FILES["mobile_recommendations"]).tail(20)
     if mob.empty:
@@ -1155,7 +1359,7 @@ def virtual_backend_test() -> Tuple[bool, str, Dict[str, Any]]:
     analysis = pd.DataFrame(results)
     payload = {"app":APP_NAME,"version":APP_VERSION,"type":"virtual_test","created_at":now_text(),"analysis_scores":analysis.to_dict("records"),"mobile_recommendations":analysis.to_dict("records"),"counts":{"fixtures":len(fixtures),"history":len(history),"markets":len(markets),"analysis":len(analysis)}}
     ok = len(fixtures)==2 and len(history)>=20 and len(tf)>=4 and len(ha)>=4 and len(hh)==2 and len(analysis)==6 and "pick" in analysis.columns and len(payload["mobile_recommendations"])==6
-    details = {"fixtures":len(fixtures),"history":len(history),"team_form":len(tf),"home_away":len(ha),"h2h":len(hh),"markets":len(markets),"analysis":len(analysis),"payload_mobile":len(payload["mobile_recommendations"])}
+    details = {"fixtures":len(fixtures),"history":len(history),"team_form":len(tf),"home_away":len(ha),"h2h":len(hh),"markets":len(markets),"analysis":len(analysis),"payload_mobile":len(payload["mobile_recommendations"]),"sportmonks_function":"present"}
     return ok, "가상 백엔드 전체 테스트 통과" if ok else "가상 백엔드 테스트 실패", details
 
 
@@ -1324,6 +1528,9 @@ def render_hub_tab():
 
     st.markdown("#### 최근 허브 전송 로그")
     st.dataframe(read_csv(OUTPUT_FILES["hub_send_logs"]).tail(100), width="stretch")
+    st.markdown("#### Sportmonks 상태")
+    st.json(sportmonks_secret_status())
+    st.dataframe(read_csv(OUTPUT_FILES["sportmonks_status"]).tail(100), width="stretch")
 
 def render_diagnosis_tab():
     st.subheader("🧪 백엔드 진단")
@@ -1343,6 +1550,16 @@ def render_diagnosis_tab():
     st.json(build_diagnosis())
     with st.expander("최근 실행 로그", expanded=True):
         st.dataframe(read_csv(OUTPUT_FILES["run_logs"]).tail(200), width="stretch")
+    with st.expander("Sportmonks API 진단", expanded=True):
+        st.json(sportmonks_secret_status())
+        if st.button("🐒 Sportmonks API 단독 테스트"):
+            sm_fx, sm_logs = fetch_sportmonks_fixtures()
+            n,total = append_csv(SOURCE_FILES["source_sportmonks"], sm_fx, ["match_id"])
+            if not sm_fx.empty:
+                append_csv(SOURCE_FILES["source_livescore_fixtures"], sm_fx, ["match_id"])
+            st.success(f"Sportmonks 저장: 신규 {n}, 전체 {total}") if not sm_fx.empty else st.warning("Sportmonks 저장 0건 - 아래 상태 로그를 확인하세요")
+            st.dataframe(sm_logs, width="stretch")
+        st.dataframe(read_csv(OUTPUT_FILES["sportmonks_status"]).tail(200), width="stretch")
     with st.expander("최근 오류 로그", expanded=False):
         st.dataframe(read_csv(OUTPUT_FILES["error_logs"]).tail(200), width="stretch")
 
@@ -1383,7 +1600,7 @@ def main():
     with tabs[4]: render_mobile_tab()
     with tabs[5]: render_hub_tab()
     with tabs[6]: render_diagnosis_tab()
-    st.caption(f"{APP_VERSION} · {now_text()} · 자동구매/자동결제 없음")
+    st.caption(f"{APP_VERSION} · {now_text()} · 자동구매/자동결제 없음 · 기존 기능 유지 + Sportmonks 진단 추가")
 
 
 if __name__ == "__main__":

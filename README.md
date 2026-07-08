@@ -1,34 +1,44 @@
-# MARU SPORTS PROTO FIXTURE HUB v12
+# MARU SPORTS PROTO FIXTURE HUB v13
 
-기존 v11 기능을 빼지 않고 유지하면서, 구글시트 허브 바로가기/설정 확인을 강화한 버전입니다.
+기존 v12 기능은 제거하지 않고 유지했습니다.
+
+## v13 추가 내용
+- Sportmonks Secret 감지
+- USE_SLOW_API=Y일 때만 Sportmonks 실제 호출
+- 키가 비어 있으면 호출 생략하고 앱 로딩 보호
+- HTTP 상태, data 건수, participants 파싱 건수, 저장 건수 기록
+- source_sportmonks.csv 저장
+- source_livescore_fixtures.csv에도 Sportmonks 일정 병합
+- sportmonks_status.csv 생성
+- 허브 Payload와 Google Sheet에 sportmonks_status 전송
+- 백엔드 진단 탭에 Sportmonks API 단독 테스트 버튼 추가
 
 ## 유지 기능
-- 일정표 자동수집
-- 과거자료 자동수집
-- source 저장
+- 전체실행
+- TheSportsDB 일정표 자동수집
+- football-data 과거자료 자동수집
 - standard 변환
-- 팀폼/홈원정/상대전적 빅데이터 계산
+- 팀폼/홈원정/상대전적 계산
 - 승부식 분석
-- 모바일 추천 생성
-- missing_data_report / coach_status / injury_status / lineup_status / transfer_status / news_status / proto_market_status 생성
-- 허브 payload 생성
-- 구글시트 허브 전송
-- payload queue 저장
-- hub_send_logs 저장
-- 전체 로그 ZIP 다운로드
-- TEST_REPORT_RUNTIME 생성
+- 모바일 추천
+- 허브 전송
+- 구글시트 바로가기
+- 부족자료 진단표
+- 로그 ZIP
+- 상태 리포트
 
-## v12 추가 기능
-- `GOOGLE_SHEET_URL` Secret 인식
-- 앱 안에 `📊 구글시트 허브 바로가기` 버튼 표시
-- 상태 리포트와 hub payload에 구글시트 바로가기 상태 포함
-- Apps Script 응답에 `spreadsheet_id`, `spreadsheet_url` 포함
-- Apps Script에 `hub_config` 시트 자동 생성
-
-## Streamlit Secrets 예시
+## Secrets 예시
 ```toml
-GAS_WEBAPP_URL = "https://script.google.com/macros/s/여기에_웹앱_URL/exec"
-GOOGLE_SHEET_URL = "https://docs.google.com/spreadsheets/d/여기에_시트_ID/edit"
+SPORTMONKS_API_TOKEN = "형님 키"
+SPORTMONKS_API_KEY = "형님 키"
+SPORTS_API_KEY = "형님 키"
+
+SKYTOTO_SPORTS_API_PROVIDER = "sportmonks"
+SKYTOTO_SPORTS_API_URL = "https://api.sportmonks.com/v3/football/fixtures/date/{today_dash}?api_token={api_key}&include=participants;league"
+USE_SLOW_API = "Y"
+
+GAS_WEBAPP_URL = "https://script.google.com/macros/s/웹앱주소/exec"
+GOOGLE_SHEET_URL = "https://docs.google.com/spreadsheets/d/구글시트ID/edit"
 ```
 
-`GAS_WEBAPP_URL`은 전송용이고, `GOOGLE_SHEET_URL`은 앱 안의 바로가기 버튼용입니다.
+키가 없을 때는 `USE_SLOW_API = "N"` 권장.
