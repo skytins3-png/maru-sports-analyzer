@@ -829,7 +829,10 @@ def tab_sources() -> None:
         if st.button("football-data 자동 탐색 저장", use_container_width=True):
             seasons = [x.strip() for x in fd_seasons_text.split(",") if x.strip()] or default_seasons
             n, msg, log_df = collect_football_data_auto(fd_codes, seasons)
-            st.success(msg) if n else st.warning(msg)
+            if n:
+                st.success(msg)
+            else:
+                st.warning(msg)
             st.dataframe(log_df, use_container_width=True)
 
         with st.expander("고급: 특정 CSV URL 직접 저장"):
@@ -838,7 +841,10 @@ def tab_sources() -> None:
             fd_season = st.text_input("시즌", value="")
             if st.button("특정 football-data URL 저장", use_container_width=True):
                 n, msg = collect_football_data_csv(fd_url, fd_league, fd_season)
-                st.success(msg) if n else st.warning(msg)
+                if n:
+                    st.success(msg)
+                else:
+                    st.warning(msg)
 
     with st.expander("Sportmonks 수집 → source_sportmonks.csv"):
         token_default = get_secret("SPORTMONKS_API_KEY", "")
@@ -848,14 +854,20 @@ def tab_sources() -> None:
         sm_end = c2.date_input("종료일", value=date.today()).isoformat()
         if st.button("Sportmonks 원본 저장", use_container_width=True):
             n, msg = collect_sportmonks(sm_token, sm_start, sm_end)
-            st.success(msg) if n else st.warning(msg)
+            if n:
+                st.success(msg)
+            else:
+                st.warning(msg)
 
     with st.expander("TheSportsDB 수집 → source_thesportsdb.csv"):
         league_id = st.text_input("TheSportsDB League ID", placeholder="예: 4328")
         tsdb_season = st.text_input("시즌", placeholder="예: 2025-2026")
         if st.button("TheSportsDB 원본 저장", use_container_width=True):
             n, msg = collect_thesportsdb(league_id, tsdb_season)
-            st.success(msg) if n else st.warning(msg)
+            if n:
+                st.success(msg)
+            else:
+                st.warning(msg)
 
     with st.expander("CSV 업로드로 source 파일 덮어쓰기/추가"):
         target = st.selectbox("대상 source 파일", SOURCE_FILES)
@@ -928,7 +940,10 @@ def tab_hub() -> None:
     if st.button("선택 파일 허브 전송", use_container_width=True):
         for f in targets:
             ok, msg = send_file_to_hub(f, hub_url)
-            st.success(f"{f}: {msg}") if ok else st.error(f"{f}: {msg}")
+            if ok:
+                st.success(f"{f}: {msg}")
+            else:
+                st.error(f"{f}: {msg}")
     show_df("hub_send_logs.csv", height=260)
 
 
