@@ -67,28 +67,28 @@ def main():
     now_kst = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S KST")
 
     # ==========================================
-    # 🔄 [핵심 변경] 무료 경기자료 데이터 수집 허브 로직
+    # 🔄 무료 경기자료 데이터 수집 허브 로직
     # ==========================================
     fixtures = []
     data_source_info = "로컬 저장소"
 
-    # 1순위: 마루님이 직접 붙여넣거나 캐싱된 실제 경기 데이터 로드 시도
+    # 1순위: 캐싱된 실제 경기 데이터 로드 시도
     history_csv_path = "cache/history_matches.csv"
     if os.path.exists(history_csv_path):
         try:
             df_local = pd.read_csv(history_csv_path)
             if not df_local.empty:
-                # ArrowTypeError 방지를 위해 '값' 또는 문자열 믹스 컬럼 타입 클리닝
+                # ArrowTypeError 방지를 위해 '값' 또는 object 타입 클리닝
                 if '값' in df_local.columns:
                     df_local['값'] = df_local['값'].astype(str)
                 
-                # 가공 편의성을 위해 데이터프레임을 레코드 딕셔너리로 변환
+                # 데이터프레임을 레코드 딕셔너리 리스트로 변환
                 fixtures = df_local.to_dict(orient="records")
                 data_source_info = f"실제 수집 데이터 ({len(fixtures)}건)"
         except Exception as e:
             st.sidebar.error(f"로컬 수집 허브 파일 로드 실패: {e}")
 
-    # 2순위: 만약 수집된 실데이터가 0건이라면 시스템 다운을 막기 위해 가이드 및 샘플 전환
+    # 2순위: 만약 수집된 실데이터가 0건이라면 가이드 및 샘플 모드 전환
     is_sample_mode = False
     if not fixtures:
         fixtures = load_sample_fixtures()
@@ -100,20 +100,37 @@ def main():
     snapshots = []
     analyses = []
 
-    # 데이터 분석 및 스냅샷 빌드 루프
+    # ==========================================
+    # 🛡️ 데이터 분석 및 KeyError 방어 처리 루프
+    # ==========================================
     for idx, fixture in enumerate(fixtures):
-        # 복잡한 루프 내 위젯 중복 ID 충돌을 완벽히 방어하기 위해 idx 바인딩 권장
+        # 🚨 [KeyError 방어벽] 수동 CSV나 타사 API에 빠지기 쉬운 필수 구조 강제 인젝션
+        if "match_no" not in fixture:
+            fixture["match_no"] = fixture.get("match_id", idx + 1)
+        if "match_id" not in fixture:
+            fixture["match_id"] = f"match_{idx + 1}"
+        if "home_team" not in fixture:
+            fixture["home_team"] = "Home"
+        if "away_team" not in fixture:
+            fixture["away_team"] = "Away"
+        if "league" not in fixture:
+            fixture["league"] = "Unknown League"
+        if "date" not in fixture:
+            fixture["date"] = datetime.now(KST).strftime("%Y-%m-%d")
+
+        # 인프라 핵심 엔진 가동
         snapshot = build_pre_match_snapshot(fixture, cache=cache, use_slow_api=use_slow_api)
         snapshots.append(snapshot)
         
         analysis = analyze_match(fixture, snapshot)
         analyses.append(analysis)
         
+        # 여기서 하위 모듈(football_recommender.py)의 KeyError를 원천적으로 틀어막습니다.
         rec = build_recommendations(fixture, snapshot, analysis)
         if rec:
             recommendations.append(rec)
 
-    # 대시보드 상태창 출력 (현재 데이터 소스 출처 명시)
+    # 대시보드 상태창 출력
     render_system_status(
         now_kst=now_kst,
         fixture_count=len(fixtures),
@@ -137,7 +154,6 @@ def main():
     if recommendations and not is_sample_mode:
         render_mobile_cards(recommendations)
     elif is_sample_mode:
-        # 데이터가 가짜일 때는 사용자에게 가짜 데이터를 실데이터처럼 속여 보여주지 않고 가드 작동
         render_empty_guard()
         with st.expander("🛠️ [개발자용] 가짜 샘플 분석 결과 미리보기"):
             if recommendations:
@@ -146,7 +162,7 @@ def main():
         render_empty_guard()
 
     # ==========================================
-    # 📊 데이터프레임 출력 파트 (Arrow 직렬화 예외 에러 완벽 방어)
+    # 📊 데이터프레임 출력 파트 (Arrow 직렬화 에러 완벽 방어)
     # ==========================================
     st.divider()
     with st.expander("경기 원자료 보기"):
@@ -164,6 +180,10 @@ def main():
     with st.expander("기존 SKYTOTO 듀얼 엔진 자동 비교", expanded=False):
         dual_rows = []
         for fixture in fixtures:
+            # 루프 도는 경기 원천 데이터 정합성 보장 재확인
+            if "match_id" not in fixture:
+                fixture["match_id"] = f"match_dual_{idx + 1}"
+            
             snapshot = build_pre_match_snapshot(fixture, cache=cache, use_slow_api=use_slow_api)
             dual = analyze_fixture_with_dual_engine(fixture, snapshot)
             dual_rows.append({
