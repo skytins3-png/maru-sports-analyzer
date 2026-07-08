@@ -1,135 +1,118 @@
 import os
-import tempfile
-from io import StringIO
+import json
+import zipfile
+from io import StringIO, BytesIO
 from datetime import datetime, timezone, timedelta
-from typing import Dict, List, Tuple
+from difflib import SequenceMatcher
+from typing import Dict, List, Tuple, Any
 
 import pandas as pd
 import requests
 import streamlit as st
 
-# ==========================================================
-# MARU SPORTS ANALYZER - PROTO FIXTURE HUB V5 BACKEND DIAGNOSIS
-# ----------------------------------------------------------
-# 사진 1: 라이브스코어/토토 일정표 = 경기 목록 기준만
-# 사진 2: 프로토 승부식 = 승무패/핸디/언오버/전반/더블찬스/SUM/승패/한경기조합/기타
-# 9. PC 모니터링과 전체실행에 실제 실행 버튼을 둔다.
-# 10. 일정표는 매일 수동 입력이 아니라 자동수집 버튼/Actions로 갱신한다.
-# 11. 허브/구글시트가 없어도 가상 백엔드 테스트와 payload 검사를 기본 탑재한다.
-# 원칙:
-# 1. 특정 사이트 하나에 의존하지 않는다.
-# 2. 라이브스코어는 일정표 기준만 사용한다.
-# 3. source_* 원본 저장, standard_* 표준화, output 추천/허브 로그 분리.
-# 4. 분석 엔진은 standard_*만 읽는다.
-# 5. 추천카드는 예정 경기만 대상으로 만든다.
-# 6. 샘플/TEST/가짜 추천카드는 자동 생성하지 않는다.
-# 7. 자료 부족하면 분석불가/자료부족 표시.
-# 8. 자동구매/자동결제 없음.
-# ==========================================================
-
 KST = timezone(timedelta(hours=9))
+APP_NAME = "MARU SPORTS PROTO FIXTURE HUB"
+APP_VERSION = "v8-complete-test"
 DATA_DIR = "data"
+LOG_DIR = "logs"
+PAYLOAD_DIR = "payloads"
 
 SOURCE_FILES = {
-    "livescore_fixtures": "source_livescore_fixtures.csv",       # 일정표만
-    "livescore_team_form": "source_livescore_team_form.csv",     # 홈/원정/최근 흐름 복사자료
-    "livescore_h2h": "source_livescore_h2h.csv",                 # 상대전적 복사자료
-    "livescore_news": "source_livescore_news.csv",               # 공지/뉴스 복사자료
-    "football_data": "source_football_data.csv",                 # 과거 결과 자동/CSV
-    "sportmonks": "source_sportmonks.csv",                       # 보조 source
-    "thesportsdb": "source_thesportsdb.csv",                     # 보조 source
-    "proto_markets": "source_proto_markets.csv",                 # 실제 승부식/기준점 수동 입력
-    "manual": "source_manual.csv",                               # 감독/부상/라인업/이적/메모
+    "source_livescore_fixtures": f"{DATA_DIR}/source_livescore_fixtures.csv",
+    "source_livescore_team_form": f"{DATA_DIR}/source_livescore_team_form.csv",
+    "source_livescore_h2h": f"{DATA_DIR}/source_livescore_h2h.csv",
+    "source_livescore_news": f"{DATA_DIR}/source_livescore_news.csv",
+    "source_football_data": f"{DATA_DIR}/source_football_data.csv",
+    "source_sportmonks": f"{DATA_DIR}/source_sportmonks.csv",
+    "source_thesportsdb": f"{DATA_DIR}/source_thesportsdb.csv",
+    "source_proto_markets": f"{DATA_DIR}/source_proto_markets.csv",
+    "source_manual": f"{DATA_DIR}/source_manual.csv",
 }
 
 STANDARD_FILES = {
-    "upcoming_fixtures": "standard_upcoming_fixtures.csv",
-    "history_matches": "standard_history_matches.csv",
-    "team_form": "standard_team_form.csv",
-    "team_home_away": "standard_team_home_away.csv",
-    "h2h": "standard_h2h.csv",
-    "coaches": "standard_coaches.csv",
-    "transfers": "standard_transfers.csv",
-    "injuries": "standard_injuries.csv",
-    "lineups": "standard_lineups.csv",
-    "news_flags": "standard_news_flags.csv",
-    "markets": "standard_markets.csv",
+    "standard_upcoming_fixtures": f"{DATA_DIR}/standard_upcoming_fixtures.csv",
+    "standard_history_matches": f"{DATA_DIR}/standard_history_matches.csv",
+    "standard_team_form": f"{DATA_DIR}/standard_team_form.csv",
+    "standard_team_home_away": f"{DATA_DIR}/standard_team_home_away.csv",
+    "standard_h2h": f"{DATA_DIR}/standard_h2h.csv",
+    "standard_coaches": f"{DATA_DIR}/standard_coaches.csv",
+    "standard_transfers": f"{DATA_DIR}/standard_transfers.csv",
+    "standard_injuries": f"{DATA_DIR}/standard_injuries.csv",
+    "standard_lineups": f"{DATA_DIR}/standard_lineups.csv",
+    "standard_news_flags": f"{DATA_DIR}/standard_news_flags.csv",
+    "standard_markets": f"{DATA_DIR}/standard_markets.csv",
 }
 
 OUTPUT_FILES = {
-    "analysis_scores": "analysis_scores.csv",
-    "mobile_recommendations": "mobile_recommendations.csv",
-    "hub_send_logs": "hub_send_logs.csv",
-    "error_logs": "error_logs.csv",
-    "run_logs": "run_logs.csv",
+    "analysis_scores": f"{DATA_DIR}/analysis_scores.csv",
+    "mobile_recommendations": f"{DATA_DIR}/mobile_recommendations.csv",
+    "hub_send_logs": f"{DATA_DIR}/hub_send_logs.csv",
+    "run_logs": f"{LOG_DIR}/run_logs.csv",
+    "error_logs": f"{LOG_DIR}/error_logs.csv",
+    "backend_diagnosis": f"{DATA_DIR}/backend_diagnosis_report.csv",
+    "hub_payload_latest": f"{PAYLOAD_DIR}/hub_payload_latest.json",
+    "hub_payload_queue": f"{PAYLOAD_DIR}/hub_payload_queue.jsonl",
 }
 
-LEAGUE_NAMES = {
-    "E0": "잉글랜드 프리미어리그", "E1": "잉글랜드 챔피언십",
-    "D1": "독일 분데스리가", "D2": "독일 분데스리가2",
-    "SP1": "스페인 라리가", "SP2": "스페인 세군다",
-    "I1": "이탈리아 세리에A", "I2": "이탈리아 세리에B",
-    "F1": "프랑스 리그1", "F2": "프랑스 리그2",
-    "N1": "네덜란드 에레디비시", "P1": "포르투갈 프리메이라",
-    "B1": "벨기에 주필러리그", "SC0": "스코틀랜드 프리미어십",
+LEAGUE_CODES = {
+    "E0": "English Premier League",
+    "E1": "English Championship",
+    "D1": "German Bundesliga",
+    "SP1": "Spanish La Liga",
+    "I1": "Italian Serie A",
+    "F1": "French Ligue 1",
 }
 
-SPORTS = ["축구", "야구", "농구", "배구", "하키", "e스포츠", "기타"]
-
-MARKET_TEMPLATES = [
-    {"market_type": "승무패", "market_label": "승무패", "line": "", "choices": "홈승|무|원정승", "need": "기본"},
-    {"market_type": "핸디캡", "market_label": "핸디캡", "line": "+1.0/-1.0", "choices": "홈핸디|원정핸디", "need": "기준점"},
-    {"market_type": "언더/오버", "market_label": "언더/오버", "line": "2.5", "choices": "언더|오버", "need": "기준점"},
-    {"market_type": "전반", "market_label": "전반", "line": "전반", "choices": "전반홈|전반무|전반원정", "need": "전반자료"},
-    {"market_type": "더블찬스", "market_label": "더블찬스", "line": "", "choices": "홈/무|홈/원정|무/원정", "need": "안전형"},
-    {"market_type": "SUM", "market_label": "SUM", "line": "합계", "choices": "홀|짝|구간", "need": "특수자료"},
-    {"market_type": "승패/승5패", "market_label": "승패/승5패", "line": "점수차", "choices": "대승|승|무|패|대패", "need": "점수차"},
-    {"market_type": "한경기조합", "market_label": "한경기조합", "line": "조합", "choices": "승무패+언오버|핸디+언오버", "need": "복합"},
-    {"market_type": "한경기구매", "market_label": "한경기 구매", "line": "단일경기", "choices": "가능|불가", "need": "구매방식"},
-    {"market_type": "기타", "market_label": "기타", "line": "", "choices": "코너|카드|선수|특수", "need": "특수자료"},
-]
-
-# TheSportsDB는 일정표 자동수집용 보조 source입니다.
-# 라이브스코어에 의존하지 않고, 오늘/예정 경기 목록을 자동으로 채우는 용도입니다.
-THESPORTSDB_DEFAULT_LEAGUES = {
-    "EPL": "4328",
+THESPORTSDB_LEAGUES = {
+    "English Premier League": "4328",
     "English Championship": "4329",
     "German Bundesliga": "4331",
+    "Spanish La Liga": "4335",
     "Italian Serie A": "4332",
     "French Ligue 1": "4334",
-    "Spanish La Liga": "4335",
 }
+
+MARKET_TEMPLATES = [
+    {"market_type": "승무패", "line_value": "", "option_a": "홈승", "option_b": "무승부", "option_c": "원정승"},
+    {"market_type": "핸디캡", "line_value": "+1.0", "option_a": "홈핸디", "option_b": "원정핸디", "option_c": ""},
+    {"market_type": "언더오버", "line_value": "2.5", "option_a": "언더", "option_b": "오버", "option_c": ""},
+    {"market_type": "전반", "line_value": "", "option_a": "전반홈", "option_b": "전반무", "option_c": "전반원정"},
+    {"market_type": "더블찬스", "line_value": "", "option_a": "홈/무", "option_b": "홈/원정", "option_c": "무/원정"},
+    {"market_type": "SUM", "line_value": "", "option_a": "합홀", "option_b": "합짝", "option_c": ""},
+    {"market_type": "승패/승5패", "line_value": "", "option_a": "승", "option_b": "패", "option_c": "5패"},
+    {"market_type": "한경기조합", "line_value": "", "option_a": "조합A", "option_b": "조합B", "option_c": ""},
+    {"market_type": "한경기구매", "line_value": "", "option_a": "단일", "option_b": "", "option_c": ""},
+    {"market_type": "기타", "line_value": "", "option_a": "특수", "option_b": "", "option_c": ""},
+]
 
 COLUMN_MAP = {
-    "날짜": "date", "경기일": "date", "일자": "date", "시간": "kickoff_kst", "킥오프": "kickoff_kst", "경기시간": "kickoff_kst",
-    "종목": "sport", "스포츠": "sport", "리그": "league", "대회": "league", "국가": "country",
-    "홈팀": "home_team", "홈": "home_team", "원정팀": "away_team", "원정": "away_team", "팀1": "home_team", "팀2": "away_team",
-    "홈점수": "home_score", "원정점수": "away_score", "스코어홈": "home_score", "스코어원정": "away_score",
-    "상태": "status", "출처": "source", "경기ID": "match_id", "경기아이디": "match_id",
-    "배당홈": "odds_home", "배당무": "odds_draw", "배당원정": "odds_away", "기준점": "line",
-    "시장": "market_type", "승부식": "market_type", "선택지": "choices",
-    "팀": "team", "팀명": "team", "감독": "coach", "감독취임일": "coach_start_date", "취임일": "coach_start_date",
-    "부상": "injuries", "결장": "missing_players", "출장정지": "suspended_players", "주전부상": "key_injuries",
-    "핵심선수": "key_players", "주요선수": "key_players", "영입": "transfers_in", "이적": "transfers_out", "스카우트": "scout_note",
-    "라인업": "expected_lineup", "예상라인업": "expected_lineup", "포메이션": "formation", "메모": "note", "뉴스": "news", "공지": "news", "비고": "note",
-    "최근5경기": "recent5", "최근10경기": "recent10", "홈승": "home_wins", "홈무": "home_draws", "홈패": "home_losses",
-    "원정승": "away_wins", "원정무": "away_draws", "원정패": "away_losses", "상대전적": "h2h_note",
+    "Date": "date", "날짜": "date", "경기일": "date",
+    "Time": "kickoff_kst", "시간": "kickoff_kst", "킥오프": "kickoff_kst",
+    "Div": "league_code", "리그코드": "league_code", "League": "league", "리그": "league",
+    "HomeTeam": "home_team", "홈팀": "home_team", "홈": "home_team",
+    "AwayTeam": "away_team", "원정팀": "away_team", "원정": "away_team",
+    "FTHG": "home_score", "홈점수": "home_score",
+    "FTAG": "away_score", "원정점수": "away_score",
+    "FTR": "result", "status": "status", "상태": "status",
+    "team": "team", "팀": "team", "팀명": "team",
+    "coach": "coach", "감독": "coach", "coach_start_date": "coach_start_date", "취임일": "coach_start_date",
+    "injuries": "injuries", "부상": "injuries", "missing_players": "missing_players", "결장": "missing_players",
+    "lineup": "lineup", "라인업": "lineup", "transfers": "transfers", "영입": "transfers", "스카우트": "scouting_note",
+    "news": "news", "뉴스": "news", "note": "note", "메모": "note",
+    "market_type": "market_type", "승부식": "market_type", "line_value": "line_value", "기준점": "line_value",
 }
 
 
-def ensure_data_dir() -> None:
-    os.makedirs(DATA_DIR, exist_ok=True)
+def ensure_dirs():
+    for d in [DATA_DIR, LOG_DIR, PAYLOAD_DIR]:
+        os.makedirs(d, exist_ok=True)
 
 
-def path_for(filename: str) -> str:
-    return os.path.join(DATA_DIR, filename)
-
-
-def now_kst() -> str:
+def now_text():
     return datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S KST")
 
 
-def clean_text(value) -> str:
+def clean(value: Any) -> str:
     if value is None:
         return ""
     text = str(value).strip()
@@ -139,1271 +122,888 @@ def clean_text(value) -> str:
 
 
 def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
-    if df is None or df.empty:
-        return pd.DataFrame()
     out = df.copy()
-    out.columns = [clean_text(c) for c in out.columns]
+    out.columns = [clean(c) for c in out.columns]
     out = out.rename(columns={c: COLUMN_MAP.get(c, c) for c in out.columns})
     return out
 
 
-def normalize_date(raw) -> str:
-    text = clean_text(raw)
-    if not text:
-        return ""
-    if " " in text:
-        text = text.split(" ")[0]
-    for sep in ["/", "."]:
-        if sep in text:
-            parts = [p.strip() for p in text.split(sep)]
-            if len(parts) == 3:
-                if len(parts[0]) == 4:
-                    y, m, d = parts
-                else:
-                    d, m, y = parts
-                    if len(y) == 2:
-                        y = "20" + y
-                return f"{y.zfill(4)}-{m.zfill(2)}-{d.zfill(2)}"
-    return text
-
-
-def safe_int(value, default=0) -> int:
-    text = clean_text(value)
-    if not text:
-        return default
+def safe_int(value, default=None):
     try:
+        text = clean(value)
+        if text == "":
+            return default
         return int(float(text))
     except Exception:
         return default
 
 
-def safe_float(value, default=0.0) -> float:
-    text = clean_text(value)
+def normalize_date(value: Any) -> str:
+    text = clean(value)
     if not text:
-        return default
+        return ""
+    # football-data often DD/MM/YYYY
+    if "/" in text:
+        parts = text.split("/")
+        if len(parts) == 3:
+            a, b, y = parts
+            if len(y) == 2:
+                y = "20" + y
+            return f"{y.zfill(4)}-{b.zfill(2)}-{a.zfill(2)}"
     try:
-        return float(text)
+        return pd.to_datetime(text, errors="coerce").strftime("%Y-%m-%d")
     except Exception:
-        return default
+        return text[:10]
 
 
-def read_csv(filename: str) -> pd.DataFrame:
-    ensure_data_dir()
-    full_path = path_for(filename)
-    if not os.path.exists(full_path):
+def read_csv(path: str) -> pd.DataFrame:
+    if not os.path.exists(path):
         return pd.DataFrame()
     try:
-        return normalize_columns(pd.read_csv(full_path, dtype=str).fillna(""))
+        return normalize_columns(pd.read_csv(path, dtype=str).fillna(""))
     except Exception as exc:
-        log_error("read_csv", filename, str(exc))
+        log_error("read_csv", path, str(exc))
         return pd.DataFrame()
 
 
-def write_csv(filename: str, df: pd.DataFrame) -> None:
-    ensure_data_dir()
-    if df is None:
-        df = pd.DataFrame()
-    df.to_csv(path_for(filename), index=False, encoding="utf-8-sig")
+def write_csv(path: str, df: pd.DataFrame):
+    ensure_dirs()
+    df = df.copy() if df is not None else pd.DataFrame()
+    df.to_csv(path, index=False, encoding="utf-8-sig")
 
 
-def merge_csv(filename: str, df_new: pd.DataFrame, subset: List[str]) -> Tuple[int, int]:
-    df_new = normalize_columns(df_new)
-    if df_new.empty:
-        return 0, len(read_csv(filename))
-    current = read_csv(filename)
+def append_csv(path: str, df_new: pd.DataFrame, subset: List[str] = None) -> Tuple[int, int]:
+    ensure_dirs()
+    if df_new is None or df_new.empty:
+        return 0, len(read_csv(path))
+    current = read_csv(path)
     before = len(current)
-    if current.empty:
-        total = df_new.copy()
-    else:
-        total = pd.concat([current, df_new], ignore_index=True).fillna("")
-    usable_subset = [c for c in subset if c in total.columns]
-    if usable_subset:
-        total = total.drop_duplicates(subset=usable_subset, keep="last")
-    else:
-        total = total.drop_duplicates(keep="last")
-    write_csv(filename, total)
+    total = pd.concat([current, df_new], ignore_index=True) if not current.empty else df_new.copy()
+    if subset:
+        cols = [c for c in subset if c in total.columns]
+        if cols:
+            total = total.drop_duplicates(subset=cols, keep="last")
+    total = total.drop_duplicates(keep="last")
+    write_csv(path, total)
     return max(len(total) - before, 0), len(total)
 
 
-def log_error(stage: str, target: str, message: str) -> None:
-    try:
-        row = pd.DataFrame([{"time": now_kst(), "stage": stage, "target": target, "message": clean_text(message)[:500]}])
-        merge_csv(OUTPUT_FILES["error_logs"], row, ["time", "stage", "target", "message"])
-    except Exception:
-        pass
+def log_run(step: str, status: str, message: str, extra: Dict[str, Any] = None):
+    row = {"time": now_text(), "step": step, "status": status, "message": message}
+    if extra:
+        row.update({k: json.dumps(v, ensure_ascii=False) if isinstance(v, (list, dict)) else v for k, v in extra.items()})
+    append_csv(OUTPUT_FILES["run_logs"], pd.DataFrame([row]), subset=None)
 
 
-def log_run(stage: str, message: str, rows: int = 0) -> None:
-    row = pd.DataFrame([{"time": now_kst(), "stage": stage, "message": message, "rows": rows}])
-    merge_csv(OUTPUT_FILES["run_logs"], row, ["time", "stage", "message"])
+def log_error(step: str, target: str, message: str):
+    row = {"time": now_text(), "step": step, "target": target, "message": message}
+    append_csv(OUTPUT_FILES["error_logs"], pd.DataFrame([row]), subset=None)
 
 
-def parse_csv_text(text: str) -> pd.DataFrame:
-    if not clean_text(text):
-        return pd.DataFrame()
-    return normalize_columns(pd.read_csv(StringIO(text)))
-
-
-def add_source_meta(df: pd.DataFrame, source_name: str) -> pd.DataFrame:
-    df = normalize_columns(df)
-    if df.empty:
-        return df
-    if "source" not in df.columns:
-        df["source"] = source_name
-    df["source"] = df["source"].replace("", source_name)
-    df["collected_at"] = now_kst()
-    return df
-
-
-def file_count(filename: str) -> int:
-    return len(read_csv(filename))
-
-
-def preview_df(df: pd.DataFrame, rows: int = 80) -> pd.DataFrame:
-    if df.empty:
-        return df
-    return df.tail(rows)
-
-
-# ---------------------- 일정표 자동수집 ----------------------
-
-def secret_value(key: str, default: str = "") -> str:
-    try:
-        value = st.secrets.get(key, default)
-        return str(value) if value is not None else default
-    except Exception:
-        return default
-
-
-def parse_csv_list(text: str) -> List[str]:
-    return [x.strip() for x in clean_text(text).replace("\n", ",").split(",") if x.strip()]
-
-
-def parse_league_id_text(text: str) -> Dict[str, str]:
-    """입력 예: EPL=4328,LaLiga=4335 또는 4328,4335"""
-    out: Dict[str, str] = {}
-    for idx, item in enumerate(parse_csv_list(text)):
-        if "=" in item:
-            name, league_id = item.split("=", 1)
-            out[clean_text(name) or f"league_{idx+1}"] = clean_text(league_id)
-        else:
-            out[f"league_{idx+1}"] = clean_text(item)
-    return {k: v for k, v in out.items() if v}
-
-
-def kst_time_from_timestamp(timestamp_text: str, fallback_time: str = "") -> Tuple[str, str]:
-    ts = clean_text(timestamp_text)
-    if ts:
-        try:
-            dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            dt_kst = dt.astimezone(KST)
-            return dt_kst.strftime("%Y-%m-%d"), dt_kst.strftime("%H:%M")
-        except Exception:
-            pass
-    return "", clean_text(fallback_time)[:5]
-
-
-def normalize_thesportsdb_events(events: List[Dict], source_name: str = "thesportsdb_schedule") -> pd.DataFrame:
-    rows = []
-    for ev in events or []:
-        home = clean_text(ev.get("strHomeTeam"))
-        away = clean_text(ev.get("strAwayTeam"))
-        if not home or not away:
-            continue
-        date_from_ts, time_from_ts = kst_time_from_timestamp(ev.get("strTimestamp"), ev.get("strTime"))
-        date = date_from_ts or normalize_date(ev.get("dateEvent"))
-        kickoff = time_from_ts or clean_text(ev.get("strTime"))[:5]
-        if not date:
-            continue
-        status_raw = clean_text(ev.get("strStatus")) or clean_text(ev.get("strProgress")) or "SCHEDULED"
-        home_score = clean_text(ev.get("intHomeScore"))
-        away_score = clean_text(ev.get("intAwayScore"))
-        # 일정표 source는 예정 경기 중심. 종료/점수 있는 경기는 현재 추천 대상에서 제외되도록 저장만 하되 status를 유지.
-        status = "SCHEDULED" if (not home_score and not away_score and not is_finished_status(status_raw)) else status_raw
-        match_id = clean_text(ev.get("idEvent")) or f"tsdb_{date}_{home}_{away}".replace(" ", "_")
-        rows.append({
-            "match_id": match_id,
-            "date": date,
-            "kickoff_kst": kickoff,
-            "sport": clean_text(ev.get("strSport")) or "축구",
-            "country": clean_text(ev.get("strCountry")),
-            "league": clean_text(ev.get("strLeague")),
-            "home_team": home,
-            "away_team": away,
-            "status": status,
-            "source": source_name,
-            "home_score": home_score,
-            "away_score": away_score,
-            "odds_home": "",
-            "odds_draw": "",
-            "odds_away": "",
-            "collected_at": now_kst(),
-        })
-    return pd.DataFrame(rows)
-
-
-def fetch_thesportsdb_next_league(league_ids: Dict[str, str], api_key: str = "123", timeout: int = 15) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    rows, logs = [], []
-    api_key = clean_text(api_key) or "123"
-    for league_name, league_id in league_ids.items():
-        url = f"https://www.thesportsdb.com/api/v1/json/{api_key}/eventsnextleague.php?id={league_id}"
-        log = {"time": now_kst(), "source": "thesportsdb_schedule", "league_name": league_name, "league_id": league_id, "url": url.replace(api_key, "***"), "ok": "N", "rows": 0, "message": ""}
-        try:
-            res = requests.get(url, timeout=timeout, headers={"User-Agent": "MARU-Sports-Analyzer/fixture-auto"})
-            log["http_status"] = str(res.status_code)
-            if res.status_code != 200:
-                log["message"] = f"HTTP {res.status_code}"
-                logs.append(log)
-                continue
-            data = res.json()
-            events = data.get("events") or data.get("event") or []
-            df = normalize_thesportsdb_events(events, source_name=f"thesportsdb_nextleague_{league_id}")
-            if not df.empty:
-                rows.append(df)
-                log["ok"] = "Y"
-                log["rows"] = len(df)
-                log["message"] = "일정표 변환 성공"
+def file_counts() -> Dict[str, int]:
+    counts = {}
+    for group in [SOURCE_FILES, STANDARD_FILES, OUTPUT_FILES]:
+        for name, path in group.items():
+            if path.endswith(".csv"):
+                counts[name] = len(read_csv(path))
+            elif os.path.exists(path):
+                counts[name] = 1
             else:
-                log["message"] = "변환 가능한 일정 없음"
-            logs.append(log)
-        except Exception as exc:
-            log["message"] = str(exc)[:300]
-            logs.append(log)
-    out = pd.concat(rows, ignore_index=True).drop_duplicates(subset=["match_id"], keep="last") if rows else pd.DataFrame()
-    return out, pd.DataFrame(logs)
+                counts[name] = 0
+    return counts
 
-
-def normalize_custom_fixture_payload(payload, source_name: str) -> pd.DataFrame:
-    if isinstance(payload, list):
-        return normalize_thesportsdb_events(payload, source_name=source_name)
-    if isinstance(payload, dict):
-        for key in ["events", "event", "fixtures", "matches", "data"]:
-            value = payload.get(key)
-            if isinstance(value, list):
-                # 먼저 TheSportsDB 형태를 시도하고, 실패하면 일반 컬럼 매핑으로 처리.
-                tsdb_df = normalize_thesportsdb_events(value, source_name=source_name)
-                if not tsdb_df.empty:
-                    return tsdb_df
-                return normalize_columns(pd.DataFrame(value))
-    return pd.DataFrame()
-
-
-def fetch_custom_fixture_urls(urls: List[str], timeout: int = 15) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    rows, logs = [], []
-    for url in urls:
-        safe_url = url.split("?")[0] + ("?..." if "?" in url else "")
-        log = {"time": now_kst(), "source": "custom_fixture_url", "url": safe_url, "ok": "N", "rows": 0, "message": ""}
-        try:
-            res = requests.get(url, timeout=timeout, headers={"User-Agent": "MARU-Sports-Analyzer/fixture-auto"})
-            log["http_status"] = str(res.status_code)
-            if res.status_code != 200:
-                log["message"] = f"HTTP {res.status_code}"
-                logs.append(log)
-                continue
-            content_type = res.headers.get("content-type", "").lower()
-            if "json" in content_type or res.text.strip().startswith(("{", "[")):
-                df = normalize_custom_fixture_payload(res.json(), source_name="custom_fixture_url")
-            else:
-                df = normalize_columns(pd.read_csv(StringIO(res.content.decode("utf-8", errors="ignore"))))
-            if not df.empty and "match_id" not in df.columns:
-                df["match_id"] = [f"auto_{normalize_date(r.get('date'))}_{clean_text(r.get('home_team'))}_{clean_text(r.get('away_team'))}".replace(" ", "_") for _, r in df.iterrows()]
-            if not df.empty:
-                df = add_source_meta(df, "custom_fixture_url")
-                rows.append(df)
-                log["ok"] = "Y"
-                log["rows"] = len(df)
-                log["message"] = "일정표 변환 성공"
-            else:
-                log["message"] = "변환 가능한 일정 없음"
-            logs.append(log)
-        except Exception as exc:
-            log["message"] = str(exc)[:300]
-            logs.append(log)
-    out = pd.concat(rows, ignore_index=True).drop_duplicates(subset=["match_id"], keep="last") if rows else pd.DataFrame()
-    return out, pd.DataFrame(logs)
-
-
-def quick_collect_fixtures(league_ids: Dict[str, str] = None, custom_urls: List[str] = None) -> Tuple[int, int, pd.DataFrame]:
-    """버튼/GitHub Actions 실행용: 일정표를 자동 수집해 source_livescore_fixtures.csv에 저장."""
-    league_ids = league_ids or parse_league_id_text(secret_value("THESPORTSDB_LEAGUE_IDS", "")) or THESPORTSDB_DEFAULT_LEAGUES
-    api_key = secret_value("THESPORTSDB_API_KEY", "123")
-    custom_urls = custom_urls if custom_urls is not None else parse_csv_list(secret_value("AUTO_FIXTURE_URLS", ""))
-    frames, logs = [], []
-    if league_ids:
-        df_tsdb, log_tsdb = fetch_thesportsdb_next_league(league_ids, api_key=api_key)
-        if not df_tsdb.empty:
-            frames.append(df_tsdb)
-        if not log_tsdb.empty:
-            logs.append(log_tsdb)
-    if custom_urls:
-        df_custom, log_custom = fetch_custom_fixture_urls(custom_urls)
-        if not df_custom.empty:
-            frames.append(df_custom)
-        if not log_custom.empty:
-            logs.append(log_custom)
-    log_df = pd.concat(logs, ignore_index=True) if logs else pd.DataFrame()
-    if not log_df.empty:
-        merge_csv(OUTPUT_FILES["run_logs"], log_df, ["time", "source", "url"])
-    if not frames:
-        return 0, file_count(SOURCE_FILES["livescore_fixtures"]), log_df
-    df_all = pd.concat(frames, ignore_index=True).fillna("")
-    if "match_id" not in df_all.columns:
-        df_all["match_id"] = [f"auto_{normalize_date(r.get('date'))}_{clean_text(r.get('home_team'))}_{clean_text(r.get('away_team'))}".replace(" ", "_") for _, r in df_all.iterrows()]
-    added, total = merge_csv(SOURCE_FILES["livescore_fixtures"], df_all, ["match_id", "date", "home_team", "away_team"])
-    return added, total, log_df
-
-# ---------------------- football-data ----------------------
-
-def auto_season_codes() -> List[str]:
-    now = datetime.now(KST)
-    start_year = now.year if now.month >= 7 else now.year - 1
-    codes = []
-    for sy in [start_year + 1, start_year, start_year - 1, start_year - 2, start_year - 3]:
-        code = f"{str(sy)[-2:]}{str(sy + 1)[-2:]}"
-        if code not in codes:
-            codes.append(code)
-    for fallback in ["2627", "2526", "2425", "2324", "2223"]:
-        if fallback not in codes:
-            codes.append(fallback)
-    return codes
-
-
-def football_url_candidates(season: str, league_code: str) -> List[str]:
-    return [
-        f"https://www.football-data.co.uk/mmz4281/{season}/{league_code}.csv",
-        f"https://www.football-data.co.uk/mmz4371/{season}/{league_code}.csv",
-    ]
-
-
-def validate_history_rows(df: pd.DataFrame, default_source: str = "") -> pd.DataFrame:
-    df = normalize_columns(df)
-    if df.empty:
-        return pd.DataFrame()
-    rename_map = {"Date": "date", "Div": "league_code", "HomeTeam": "home_team", "AwayTeam": "away_team", "FTHG": "home_score", "FTAG": "away_score", "FTR": "result"}
-    df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
-    required = ["date", "home_team", "away_team", "home_score", "away_score"]
-    if any(c not in df.columns for c in required):
-        return pd.DataFrame()
-    rows = []
-    for _, row in df.iterrows():
-        date = normalize_date(row.get("date"))
-        home = clean_text(row.get("home_team"))
-        away = clean_text(row.get("away_team"))
-        hs_text = clean_text(row.get("home_score"))
-        aw_text = clean_text(row.get("away_score"))
-        if not date or not home or not away or hs_text == "" or aw_text == "":
-            continue
-        hs = safe_int(hs_text, 0)
-        aw = safe_int(aw_text, 0)
-        league_code = clean_text(row.get("league_code"))
-        league = clean_text(row.get("league")) or LEAGUE_NAMES.get(league_code, league_code)
-        source = clean_text(row.get("source")) or default_source or "history_source"
-        match_id = clean_text(row.get("match_id")) or f"hist_{date}_{league}_{home}_{away}".replace(" ", "_")
-        rows.append({"match_id": match_id, "date": date, "sport": clean_text(row.get("sport")) or "축구", "league": league, "league_code": league_code, "home_team": home, "away_team": away, "home_score": str(hs), "away_score": str(aw), "status": clean_text(row.get("status")) or "FT", "source": source, "collected_at": clean_text(row.get("collected_at")) or now_kst()})
-    return pd.DataFrame(rows)
-
-
-def fetch_football_data(seasons: List[str], leagues: List[str], timeout: int = 10) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    rows, logs = [], []
-    for season in seasons:
-        for league_code in leagues:
-            league_code = clean_text(league_code).upper()
-            for url in football_url_candidates(season, league_code):
-                log = {"time": now_kst(), "source": "football-data", "season": season, "league_code": league_code, "url": url, "ok": "N", "rows": 0, "message": ""}
-                try:
-                    res = requests.get(url, timeout=timeout, headers={"User-Agent": "MARU-Sports-Analyzer/2.0"})
-                    log["http_status"] = str(res.status_code)
-                    if res.status_code != 200:
-                        log["message"] = f"HTTP {res.status_code}"
-                        logs.append(log)
-                        continue
-                    raw = pd.read_csv(StringIO(res.content.decode("utf-8", errors="ignore")))
-                    raw["source"] = f"football_data_{season}_{league_code}"
-                    raw["league"] = LEAGUE_NAMES.get(league_code, league_code)
-                    raw["league_code"] = league_code
-                    clean_df = validate_history_rows(raw, default_source=f"football_data_{season}_{league_code}")
-                    if clean_df.empty:
-                        log["message"] = "변환 가능한 완료 경기 없음"
-                        logs.append(log)
-                        continue
-                    rows.append(clean_df)
-                    log["ok"] = "Y"
-                    log["rows"] = len(clean_df)
-                    log["message"] = "저장 가능"
-                    logs.append(log)
-                    break
-                except Exception as exc:
-                    log["message"] = str(exc)[:300]
-                    logs.append(log)
-    out = pd.concat(rows, ignore_index=True).drop_duplicates(subset=["match_id"], keep="last") if rows else pd.DataFrame()
-    return out, pd.DataFrame(logs)
-
-# ---------------------- 표준화 ----------------------
-
-def is_finished_status(status: str) -> bool:
-    return clean_text(status).upper() in {"FT", "FINISHED", "END", "COMPLETE", "COMPLETED", "종료", "완료"}
-
-
-def is_upcoming_status(status: str) -> bool:
-    s = clean_text(status).upper()
-    return not s or s in {"SCHEDULED", "NS", "PRE", "UPCOMING", "예정", "경기전", "대기"}
-
-
-def standardize_livescore_fixtures() -> pd.DataFrame:
-    src = read_csv(SOURCE_FILES["livescore_fixtures"])
-    if src.empty:
-        return pd.DataFrame()
-    rows = []
-    for _, row in src.iterrows():
-        date = normalize_date(row.get("date"))
-        home = clean_text(row.get("home_team"))
-        away = clean_text(row.get("away_team"))
-        status = clean_text(row.get("status")) or "SCHEDULED"
-        if not date or not home or not away:
-            continue
-        if clean_text(row.get("home_score")) or clean_text(row.get("away_score")) or is_finished_status(status) or not is_upcoming_status(status):
-            continue
-        match_id = clean_text(row.get("match_id")) or f"up_{date}_{home}_{away}".replace(" ", "_")
-        rows.append({"match_id": match_id, "date": date, "kickoff_kst": clean_text(row.get("kickoff_kst")), "sport": clean_text(row.get("sport")) or "축구", "country": clean_text(row.get("country")), "league": clean_text(row.get("league")), "home_team": home, "away_team": away, "status": "SCHEDULED", "source": clean_text(row.get("source")) or "livescore_fixture", "odds_home": clean_text(row.get("odds_home")), "odds_draw": clean_text(row.get("odds_draw")), "odds_away": clean_text(row.get("odds_away")), "collected_at": clean_text(row.get("collected_at")) or now_kst()})
-    return pd.DataFrame(rows).drop_duplicates(subset=["match_id"], keep="last") if rows else pd.DataFrame()
-
-
-def standardize_history() -> pd.DataFrame:
-    dfs = []
-    for key in ["football_data", "sportmonks", "thesportsdb", "manual"]:
-        hist = validate_history_rows(read_csv(SOURCE_FILES[key]), default_source=key)
-        if not hist.empty:
-            dfs.append(hist)
-    return pd.concat(dfs, ignore_index=True).drop_duplicates(subset=["match_id"], keep="last") if dfs else pd.DataFrame()
-
-
-def standardize_team_form() -> Tuple[pd.DataFrame, pd.DataFrame]:
-    srcs = [read_csv(SOURCE_FILES["livescore_team_form"]), read_csv(SOURCE_FILES["manual"])]
-    src = pd.concat([x for x in srcs if not x.empty], ignore_index=True) if any(not x.empty for x in srcs) else pd.DataFrame()
-    if src.empty or "team" not in src.columns:
-        return pd.DataFrame(), pd.DataFrame()
-    form_rows, home_away_rows = [], []
-    for _, row in src.iterrows():
-        team = clean_text(row.get("team"))
-        if not team:
-            continue
-        form_rows.append({"team": team, "league": clean_text(row.get("league")), "recent5": clean_text(row.get("recent5")), "recent10": clean_text(row.get("recent10")), "note": clean_text(row.get("note")), "source": clean_text(row.get("source")) or "team_form", "updated_at": now_kst()})
-        home_away_rows.append({"team": team, "league": clean_text(row.get("league")), "home_wins": safe_int(row.get("home_wins"), 0), "home_draws": safe_int(row.get("home_draws"), 0), "home_losses": safe_int(row.get("home_losses"), 0), "away_wins": safe_int(row.get("away_wins"), 0), "away_draws": safe_int(row.get("away_draws"), 0), "away_losses": safe_int(row.get("away_losses"), 0), "source": clean_text(row.get("source")) or "team_form", "updated_at": now_kst()})
-    return pd.DataFrame(form_rows), pd.DataFrame(home_away_rows)
-
-
-def standardize_h2h() -> pd.DataFrame:
-    src = read_csv(SOURCE_FILES["livescore_h2h"])
-    if src.empty:
-        return pd.DataFrame()
-    rows = []
-    for _, row in src.iterrows():
-        home = clean_text(row.get("home_team"))
-        away = clean_text(row.get("away_team"))
-        if not home or not away:
-            continue
-        rows.append({"match_id": clean_text(row.get("match_id")), "home_team": home, "away_team": away, "league": clean_text(row.get("league")), "h2h_note": clean_text(row.get("h2h_note")) or clean_text(row.get("note")), "home_h2h_wins": safe_int(row.get("home_h2h_wins"), 0), "draws": safe_int(row.get("draws"), 0), "away_h2h_wins": safe_int(row.get("away_h2h_wins"), 0), "source": clean_text(row.get("source")) or "h2h", "updated_at": now_kst()})
-    return pd.DataFrame(rows)
-
-
-def standardize_current_manual() -> Dict[str, pd.DataFrame]:
-    src = read_csv(SOURCE_FILES["manual"])
-    out = {k: pd.DataFrame() for k in ["coaches", "transfers", "injuries", "lineups"]}
-    if src.empty or "team" not in src.columns:
-        return out
-    coaches, transfers, injuries, lineups = [], [], [], []
-    for _, row in src.iterrows():
-        team = clean_text(row.get("team"))
-        if not team:
-            continue
-        if clean_text(row.get("coach")) or clean_text(row.get("coach_start_date")):
-            coaches.append({"team": team, "coach": clean_text(row.get("coach")), "coach_start_date": normalize_date(row.get("coach_start_date")), "tactical_note": clean_text(row.get("note")), "source": clean_text(row.get("source")) or "manual", "updated_at": now_kst()})
-        if clean_text(row.get("transfers_in")) or clean_text(row.get("transfers_out")) or clean_text(row.get("scout_note")):
-            transfers.append({"team": team, "transfers_in": clean_text(row.get("transfers_in")), "transfers_out": clean_text(row.get("transfers_out")), "scout_note": clean_text(row.get("scout_note")), "source": clean_text(row.get("source")) or "manual", "updated_at": now_kst()})
-        if clean_text(row.get("injuries")) or clean_text(row.get("missing_players")) or clean_text(row.get("suspended_players")) or clean_text(row.get("key_injuries")):
-            injuries.append({"team": team, "injuries": clean_text(row.get("injuries")), "missing_players": clean_text(row.get("missing_players")), "suspended_players": clean_text(row.get("suspended_players")), "key_injuries": clean_text(row.get("key_injuries")), "source": clean_text(row.get("source")) or "manual", "updated_at": now_kst()})
-        if clean_text(row.get("expected_lineup")) or clean_text(row.get("formation")):
-            lineups.append({"team": team, "formation": clean_text(row.get("formation")), "expected_lineup": clean_text(row.get("expected_lineup")), "key_players": clean_text(row.get("key_players")), "source": clean_text(row.get("source")) or "manual", "updated_at": now_kst()})
-    out["coaches"] = pd.DataFrame(coaches)
-    out["transfers"] = pd.DataFrame(transfers)
-    out["injuries"] = pd.DataFrame(injuries)
-    out["lineups"] = pd.DataFrame(lineups)
-    return out
-
-
-def standardize_news_flags() -> pd.DataFrame:
-    srcs = [read_csv(SOURCE_FILES["livescore_news"]), read_csv(SOURCE_FILES["manual"])]
-    src = pd.concat([x for x in srcs if not x.empty], ignore_index=True) if any(not x.empty for x in srcs) else pd.DataFrame()
-    if src.empty:
-        return pd.DataFrame()
-    rows = []
-    for _, row in src.iterrows():
-        team = clean_text(row.get("team"))
-        news = clean_text(row.get("news")) or clean_text(row.get("note"))
-        if not team and not news:
-            continue
-        low = news.lower()
-        flag = []
-        for key, label in [("부상", "부상"), ("결장", "결장"), ("감독", "감독"), ("이적", "이적"), ("영입", "영입"), ("라인업", "라인업"), ("징계", "징계")]:
-            if key in news or key in low:
-                flag.append(label)
-        rows.append({"team": team, "match_id": clean_text(row.get("match_id")), "league": clean_text(row.get("league")), "news": news, "flags": ",".join(flag), "source": clean_text(row.get("source")) or "news", "updated_at": now_kst()})
-    return pd.DataFrame(rows)
-
-
-def build_markets(fixtures: pd.DataFrame) -> pd.DataFrame:
-    if fixtures.empty:
-        return pd.DataFrame()
-    actual = read_csv(SOURCE_FILES["proto_markets"])
-    rows = []
-    for _, fx in fixtures.iterrows():
-        match_id = clean_text(fx.get("match_id"))
-        actual_for_match = actual[actual["match_id"].astype(str) == match_id] if not actual.empty and "match_id" in actual.columns else pd.DataFrame()
-        if not actual_for_match.empty:
-            for _, m in actual_for_match.iterrows():
-                rows.append({"match_id": match_id, "date": clean_text(fx.get("date")), "kickoff_kst": clean_text(fx.get("kickoff_kst")), "sport": clean_text(fx.get("sport")), "league": clean_text(fx.get("league")), "home_team": clean_text(fx.get("home_team")), "away_team": clean_text(fx.get("away_team")), "market_type": clean_text(m.get("market_type")), "market_label": clean_text(m.get("market_label")) or clean_text(m.get("market_type")), "line": clean_text(m.get("line")), "choices": clean_text(m.get("choices")), "status": "AVAILABLE_ACTUAL", "source": clean_text(m.get("source")) or "proto_market", "updated_at": now_kst()})
-        else:
-            for m in MARKET_TEMPLATES:
-                rows.append({"match_id": match_id, "date": clean_text(fx.get("date")), "kickoff_kst": clean_text(fx.get("kickoff_kst")), "sport": clean_text(fx.get("sport")), "league": clean_text(fx.get("league")), "home_team": clean_text(fx.get("home_team")), "away_team": clean_text(fx.get("away_team")), "market_type": m["market_type"], "market_label": m["market_label"], "line": m["line"], "choices": m["choices"], "status": "AVAILABLE_TEMPLATE", "source": "market_template", "updated_at": now_kst()})
-    return pd.DataFrame(rows)
-
-
-def run_standardize_all() -> Dict[str, int]:
-    result = {}
-    upcoming = standardize_livescore_fixtures(); write_csv(STANDARD_FILES["upcoming_fixtures"], upcoming); result["standard_upcoming_fixtures"] = len(upcoming)
-    history = standardize_history(); write_csv(STANDARD_FILES["history_matches"], history); result["standard_history_matches"] = len(history)
-    team_form, team_home_away = standardize_team_form(); write_csv(STANDARD_FILES["team_form"], team_form); write_csv(STANDARD_FILES["team_home_away"], team_home_away); result["standard_team_form"] = len(team_form); result["standard_team_home_away"] = len(team_home_away)
-    h2h = standardize_h2h(); write_csv(STANDARD_FILES["h2h"], h2h); result["standard_h2h"] = len(h2h)
-    current = standardize_current_manual()
-    for key, df in current.items():
-        write_csv(STANDARD_FILES[key], df); result[f"standard_{key}"] = len(df)
-    news = standardize_news_flags(); write_csv(STANDARD_FILES["news_flags"], news); result["standard_news_flags"] = len(news)
-    markets = build_markets(upcoming); write_csv(STANDARD_FILES["markets"], markets); result["standard_markets"] = len(markets)
-    log_run("standardize", "source to standard complete", sum(result.values()))
-    return result
-
-# ---------------------- 분석 ----------------------
-
-def team_history(history: pd.DataFrame, team: str, league: str = "") -> pd.DataFrame:
-    if history.empty:
-        return pd.DataFrame()
-    df = history.copy()
-    if league and "league" in df.columns:
-        league_df = df[df["league"].astype(str) == league]
-        if not league_df.empty:
-            df = league_df
-    mask = (df["home_team"].astype(str) == team) | (df["away_team"].astype(str) == team)
-    df = df[mask].copy()
-    if "date" in df.columns:
-        df = df.sort_values("date", ascending=False)
-    return df
-
-
-def calc_team_stats(history: pd.DataFrame, team: str, league: str = "", n: int = 10, home_away: str = "all") -> Dict:
-    df = team_history(history, team, league)
-    if df.empty:
-        return {"matches": 0, "wins": 0, "draws": 0, "losses": 0, "gf": 0, "ga": 0, "avg_for": 0.0, "avg_against": 0.0, "points": 0, "form": "자료없음"}
-    if home_away == "home":
-        df = df[df["home_team"].astype(str) == team]
-    elif home_away == "away":
-        df = df[df["away_team"].astype(str) == team]
-    df = df.head(n)
-    wins = draws = losses = gf_total = ga_total = 0
-    form = []
-    for _, row in df.iterrows():
-        hs_text = clean_text(row.get("home_score")); aw_text = clean_text(row.get("away_score"))
-        if hs_text == "" or aw_text == "":
-            continue
-        hs = safe_int(hs_text, 0); aw = safe_int(aw_text, 0)
-        if clean_text(row.get("home_team")) == team:
-            gf, ga = hs, aw
-        elif clean_text(row.get("away_team")) == team:
-            gf, ga = aw, hs
-        else:
-            continue
-        gf_total += gf; ga_total += ga
-        if gf > ga: wins += 1; form.append("W")
-        elif gf == ga: draws += 1; form.append("D")
-        else: losses += 1; form.append("L")
-    matches = wins + draws + losses
-    return {"matches": matches, "wins": wins, "draws": draws, "losses": losses, "gf": gf_total, "ga": ga_total, "avg_for": round(gf_total / matches, 2) if matches else 0.0, "avg_against": round(ga_total / matches, 2) if matches else 0.0, "points": wins * 3 + draws, "form": "-".join(form[:5]) if form else "자료없음"}
-
-
-def latest_team_row(df: pd.DataFrame, team: str) -> Dict:
-    if df.empty or "team" not in df.columns:
-        return {}
-    rows = df[df["team"].astype(str).str.lower() == team.lower()]
-    return rows.iloc[-1].to_dict() if not rows.empty else {}
-
-
-def count_list_text(text: str) -> int:
-    raw = clean_text(text)
-    if not raw:
-        return 0
-    for sep in ["/", "|", ";", "\n"]:
-        raw = raw.replace(sep, ",")
-    return len([p for p in [x.strip() for x in raw.split(",")] if p])
-
-
-def team_news_count(news: pd.DataFrame, team: str) -> int:
-    if news.empty:
-        return 0
-    if "team" in news.columns:
-        return len(news[news["team"].astype(str).str.lower() == team.lower()])
-    return 0
-
-
-def data_quality(home: str, away: str, hist_points: int, coaches: pd.DataFrame, injuries: pd.DataFrame, lineups: pd.DataFrame, transfers: pd.DataFrame, team_form: pd.DataFrame, home_away: pd.DataFrame, h2h: pd.DataFrame, news: pd.DataFrame) -> Tuple[int, List[str]]:
-    score = 0; missing = []
-    if hist_points >= 16: score += 25
-    elif hist_points >= 8: score += 18
-    elif hist_points >= 4: score += 10
-    else: missing.append("과거 경기자료 부족")
-    checks = [("홈/원정 흐름", home_away, 12), ("최근 팀폼", team_form, 10), ("감독 취임일/전술", coaches, 12), ("부상/결장", injuries, 16), ("예상 라인업", lineups, 16), ("영입/이적/스카우트", transfers, 8)]
-    for label, df, weight in checks:
-        has_home = bool(latest_team_row(df, home)); has_away = bool(latest_team_row(df, away))
-        if has_home and has_away: score += weight
-        elif has_home or has_away: score += max(4, weight // 2); missing.append(f"{label} 일부 부족")
-        else: missing.append(f"{label} 없음")
-    if not h2h.empty: score += 5
-    else: missing.append("상대전적 없음")
-    if team_news_count(news, home) or team_news_count(news, away): score += 6
-    else: missing.append("뉴스/공지 없음")
-    return min(score, 100), missing
-
-
-def analyze_market(fixture: Dict, market: Dict, history: pd.DataFrame, coaches: pd.DataFrame, injuries: pd.DataFrame, lineups: pd.DataFrame, transfers: pd.DataFrame, team_form: pd.DataFrame, home_away: pd.DataFrame, h2h: pd.DataFrame, news: pd.DataFrame) -> Dict:
-    home = clean_text(fixture.get("home_team")); away = clean_text(fixture.get("away_team")); league = clean_text(fixture.get("league"))
-    market_type = clean_text(market.get("market_type")); line = clean_text(market.get("line"))
-    home_all = calc_team_stats(history, home, league, 10, "all"); away_all = calc_team_stats(history, away, league, 10, "all")
-    home_home = calc_team_stats(history, home, league, 10, "home"); away_away = calc_team_stats(history, away, league, 10, "away")
-    hist_points = home_all["matches"] + away_all["matches"]
-    quality, missing = data_quality(home, away, hist_points, coaches, injuries, lineups, transfers, team_form, home_away, h2h, news)
-    home_inj = latest_team_row(injuries, home); away_inj = latest_team_row(injuries, away)
-    home_missing = count_list_text(home_inj.get("injuries", "")) + count_list_text(home_inj.get("missing_players", "")) + count_list_text(home_inj.get("key_injuries", ""))
-    away_missing = count_list_text(away_inj.get("injuries", "")) + count_list_text(away_inj.get("missing_players", "")) + count_list_text(away_inj.get("key_injuries", ""))
-    base = {"match_id": clean_text(fixture.get("match_id")), "match": f"{home} vs {away}", "league": league, "date_time": f"{clean_text(fixture.get('date'))} {clean_text(fixture.get('kickoff_kst'))}", "market_type": market_type, "line": line, "auto_buy": "NO", "auto_payment": "NO", "created_at": now_kst()}
-    if hist_points < 4 or quality < 35:
-        return {**base, "pick": "분석불가", "confidence": 0, "risk": "높음", "data_quality": quality, "missing_data": ", ".join(missing), "basis": "자료가 부족하여 추천하지 않습니다."}
-    home_power = home_all["points"] + home_home["points"] + home_all["gf"] - home_all["ga"] - home_missing * 2 + 2
-    away_power = away_all["points"] + away_away["points"] + away_all["gf"] - away_all["ga"] - away_missing * 2
-    diff = home_power - away_power; total_goal_flow = home_all["avg_for"] + away_all["avg_for"]
-    pick = "관망"
-    if market_type == "승무패": pick = "홈 우세" if diff >= 5 else "원정 우세" if diff <= -5 else "접전/무 주의"
-    elif market_type == "핸디캡": pick = "홈 핸디 우세" if diff >= 3 else "원정 핸디 우세" if diff <= -3 else "핸디캡 관망"
-    elif market_type == "언더/오버": pick = "오버 쪽 흐름" if total_goal_flow >= 3.0 else "언더 쪽 흐름" if total_goal_flow <= 2.0 else "언오버 관망"
-    elif market_type == "더블찬스": pick = "홈/무 안전형" if diff >= 3 else "무/원정 안전형" if diff <= -3 else "더블찬스 관망"
-    elif market_type == "전반": pick = "전반 자료부족 주의"; missing.append("전반 전용 데이터 부족")
-    elif market_type in {"SUM", "승패/승5패", "한경기조합", "한경기구매", "기타"}: pick = f"{market_type} 자료부족"; missing.append(f"{market_type} 전용 데이터 부족")
-    confidence = int(max(0, min(78, 50 + min(20, abs(diff) * 2) + max(0, quality - 60) // 4)))
-    if "관망" in pick or "자료부족" in pick or "주의" in pick: confidence = min(confidence, 58)
-    risk = "낮음" if confidence >= 70 and quality >= 75 else "중간" if confidence >= 58 and quality >= 55 else "높음"
-    basis = [f"홈 최근폼 {home_all['form']} / 홈경기 {home_home['wins']}승 {home_home['draws']}무 {home_home['losses']}패", f"원정 최근폼 {away_all['form']} / 원정경기 {away_away['wins']}승 {away_away['draws']}무 {away_away['losses']}패", f"득점흐름 {total_goal_flow:.2f}"]
-    if home_missing: basis.append(f"홈 결장/부상 입력 {home_missing}건")
-    if away_missing: basis.append(f"원정 결장/부상 입력 {away_missing}건")
-    return {**base, "pick": pick, "confidence": confidence, "risk": risk, "data_quality": quality, "missing_data": ", ".join(missing), "basis": " / ".join(basis)}
-
-
-def run_analysis() -> Tuple[pd.DataFrame, pd.DataFrame]:
-    fixtures = read_csv(STANDARD_FILES["upcoming_fixtures"]); markets = read_csv(STANDARD_FILES["markets"]); history = read_csv(STANDARD_FILES["history_matches"])
-    coaches = read_csv(STANDARD_FILES["coaches"]); injuries = read_csv(STANDARD_FILES["injuries"]); lineups = read_csv(STANDARD_FILES["lineups"]); transfers = read_csv(STANDARD_FILES["transfers"])
-    team_form = read_csv(STANDARD_FILES["team_form"]); home_away = read_csv(STANDARD_FILES["team_home_away"]); h2h = read_csv(STANDARD_FILES["h2h"]); news = read_csv(STANDARD_FILES["news_flags"])
-    if fixtures.empty or markets.empty:
-        return pd.DataFrame(), pd.DataFrame()
-    rows = []
-    for _, fx in fixtures.iterrows():
-        fx_markets = markets[markets["match_id"].astype(str) == clean_text(fx.get("match_id"))]
-        for _, market in fx_markets.iterrows():
-            rows.append(analyze_market(fx.to_dict(), market.to_dict(), history, coaches, injuries, lineups, transfers, team_form, home_away, h2h, news))
-    analysis = pd.DataFrame(rows)
-    if analysis.empty:
-        return pd.DataFrame(), pd.DataFrame()
-    write_csv(OUTPUT_FILES["analysis_scores"], analysis)
-    mobile_rows = []
-    for _, group in analysis.groupby("match_id", dropna=False):
-        g = group.copy(); g["confidence_num"] = pd.to_numeric(g.get("confidence", 0), errors="coerce").fillna(0)
-        g["quality_num"] = pd.to_numeric(g.get("data_quality", 0), errors="coerce").fillna(0)
-        g = g.sort_values(["confidence_num", "quality_num"], ascending=False)
-        for _, row in g.head(3).iterrows():
-            mobile_rows.append({"created_at": now_kst(), "match_id": clean_text(row.get("match_id")), "match": clean_text(row.get("match")), "league": clean_text(row.get("league")), "date_time": clean_text(row.get("date_time")), "market_type": clean_text(row.get("market_type")), "line": clean_text(row.get("line")), "pick": clean_text(row.get("pick")), "confidence": clean_text(row.get("confidence")), "risk": clean_text(row.get("risk")), "data_quality": clean_text(row.get("data_quality")), "missing_data": clean_text(row.get("missing_data")), "basis": clean_text(row.get("basis")), "auto_buy": "NO", "auto_payment": "NO"})
-    mobile = pd.DataFrame(mobile_rows); write_csv(OUTPUT_FILES["mobile_recommendations"], mobile)
-    log_run("analysis", "analysis and mobile cards saved", len(mobile))
-    return analysis, mobile
-
-# ---------------------- 허브 ----------------------
 
 def get_hub_url() -> str:
-    for key in ["GAS_WEBAPP_URL", "GOOGLE_SHEET_HUB_URL", "SHEET_HUB_URL", "gas_webapp_url"]:
+    keys = ["GAS_WEBAPP_URL", "GOOGLE_SHEET_HUB_URL", "gas_webapp_url", "sheet_hub_url"]
+    for key in keys:
         try:
-            val = st.secrets.get(key, "")
-            if val:
-                return str(val)
+            v = st.secrets.get(key, "")
+            if v:
+                return str(v)
         except Exception:
             pass
     return ""
 
 
-def send_hub(payload_type: str, data: Dict) -> Tuple[bool, str]:
-    url = get_hub_url()
-    if not url:
-        return False, "허브 URL 미설정"
-    payload = {"app": "MARU SPORTS ANALYZER", "type": payload_type, "created_at": now_kst(), "data": data}
-    try:
-        res = requests.post(url, json=payload, timeout=20)
-        if 200 <= res.status_code < 300:
-            return True, f"전송 성공 HTTP {res.status_code}"
-        return False, f"전송 실패 HTTP {res.status_code}: {res.text[:200]}"
-    except Exception as exc:
-        return False, f"전송 오류: {exc}"
+def season_candidates() -> List[str]:
+    now = datetime.now(KST)
+    sy = now.year if now.month >= 7 else now.year - 1
+    c = []
+    for y in [sy, sy - 1, sy - 2, sy - 3]:
+        c.append(f"{str(y)[-2:]}{str(y + 1)[-2:]}")
+    for fallback in ["2526", "2425", "2324", "2223"]:
+        if fallback not in c:
+            c.append(fallback)
+    return c
 
 
-def log_hub_result(payload_type: str, ok: bool, message: str, rows: int) -> None:
-    row = pd.DataFrame([{"time": now_kst(), "payload_type": payload_type, "ok": "Y" if ok else "N", "message": message, "rows": rows}])
-    merge_csv(OUTPUT_FILES["hub_send_logs"], row, ["time", "payload_type", "message"])
+def fetch_football_data(leagues: List[str] = None, max_seasons: int = 3) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    leagues = leagues or list(LEAGUE_CODES.keys())
+    rows, logs = [], []
+    for season in season_candidates()[:max_seasons]:
+        for code in leagues:
+            url = f"https://www.football-data.co.uk/mmz4281/{season}/{code}.csv"
+            log = {"time": now_text(), "source": "football-data", "url": url, "season": season, "league_code": code, "http_status": "", "rows": 0, "status": "fail", "message": ""}
+            try:
+                r = requests.get(url, timeout=10, headers={"User-Agent": "MARU-Sports-Analyzer/8"})
+                log["http_status"] = str(r.status_code)
+                if r.status_code != 200 or len(r.text.strip()) < 30:
+                    log["message"] = "no_data_or_http_fail"
+                    logs.append(log)
+                    continue
+                raw = pd.read_csv(StringIO(r.content.decode("utf-8", errors="ignore")))
+                raw = normalize_columns(raw)
+                count = 0
+                for _, row in raw.iterrows():
+                    date = normalize_date(row.get("date", ""))
+                    home, away = clean(row.get("home_team", "")), clean(row.get("away_team", ""))
+                    hs, aw = safe_int(row.get("home_score", "")), safe_int(row.get("away_score", ""))
+                    if not date or not home or not away or hs is None or aw is None:
+                        continue
+                    rows.append({
+                        "match_id": f"fd_{season}_{code}_{date}_{home}_{away}".replace(" ", "_"),
+                        "date": date,
+                        "kickoff_kst": "",
+                        "sport": "축구",
+                        "country": "",
+                        "league": LEAGUE_CODES.get(code, code),
+                        "league_code": code,
+                        "home_team": home,
+                        "away_team": away,
+                        "home_score": hs,
+                        "away_score": aw,
+                        "status": "FT",
+                        "source": f"football_data_{season}_{code}",
+                    })
+                    count += 1
+                log.update({"rows": count, "status": "ok", "message": f"parsed_{count}"})
+                logs.append(log)
+            except Exception as exc:
+                log["message"] = str(exc)
+                logs.append(log)
+                log_error("fetch_football_data", url, str(exc))
+    return pd.DataFrame(rows), pd.DataFrame(logs)
 
 
-def quick_collect_football_data(default_seasons=None, default_leagues=None) -> Tuple[int, int, pd.DataFrame]:
-    """버튼 실행용: football-data 과거자료를 자동 탐색해 source_football_data.csv에 저장."""
-    seasons = default_seasons or auto_season_codes()[:4]
-    leagues = default_leagues or ["E0", "E1", "D1", "SP1", "I1", "F1"]
-    df_new, logs = fetch_football_data(seasons, leagues)
-    if not logs.empty:
-        merge_csv(OUTPUT_FILES["run_logs"], logs, ["time", "source", "season", "league_code", "url"])
-    if df_new.empty:
-        return 0, file_count(SOURCE_FILES["football_data"]), logs
-    added, total = merge_csv(SOURCE_FILES["football_data"], df_new, ["match_id"])
-    return added, total, logs
+def fetch_thesportsdb_fixtures(league_ids: Dict[str, str] = None) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    league_ids = league_ids or THESPORTSDB_LEAGUES
+    rows, logs = [], []
+    for league, lid in league_ids.items():
+        url = f"https://www.thesportsdb.com/api/v1/json/3/eventsnextleague.php?id={lid}"
+        log = {"time": now_text(), "source": "TheSportsDB", "url": url, "league": league, "http_status": "", "raw_events": 0, "parsed": 0, "status": "fail", "message": ""}
+        try:
+            r = requests.get(url, timeout=10, headers={"User-Agent": "MARU-Sports-Analyzer/8"})
+            log["http_status"] = str(r.status_code)
+            if r.status_code != 200:
+                log["message"] = f"HTTP {r.status_code}"
+                logs.append(log)
+                continue
+            data = r.json()
+            events = data.get("events") or []
+            log["raw_events"] = len(events)
+            for e in events:
+                home = clean(e.get("strHomeTeam"))
+                away = clean(e.get("strAwayTeam"))
+                date = normalize_date(e.get("dateEvent"))
+                time_raw = clean(e.get("strTime"))[:5]
+                mid = clean(e.get("idEvent")) or f"tsdb_{lid}_{date}_{home}_{away}".replace(" ", "_")
+                if not date or not home or not away:
+                    continue
+                rows.append({
+                    "match_id": f"tsdb_{mid}",
+                    "date": date,
+                    "kickoff_kst": time_raw,
+                    "sport": clean(e.get("strSport")) or "축구",
+                    "country": clean(e.get("strCountry")),
+                    "league": clean(e.get("strLeague")) or league,
+                    "home_team": home,
+                    "away_team": away,
+                    "status": "SCHEDULED",
+                    "source": f"thesportsdb_{lid}",
+                    "home_score": "",
+                    "away_score": "",
+                })
+            log.update({"parsed": len([x for x in rows if x.get("source") == f"thesportsdb_{lid}"]), "status": "ok", "message": "parsed"})
+            logs.append(log)
+        except Exception as exc:
+            log["message"] = str(exc)
+            logs.append(log)
+            log_error("fetch_thesportsdb_fixtures", url, str(exc))
+    return pd.DataFrame(rows), pd.DataFrame(logs)
 
 
-def quick_build_pipeline() -> Dict[str, int]:
-    """버튼 실행용: source -> standard 변환 후 분석/모바일 추천까지 저장."""
-    result = run_standardize_all()
-    analysis, mobile = run_analysis()
-    result["analysis_scores"] = len(analysis)
-    result["mobile_recommendations"] = len(mobile)
-    return result
-
-
-def render_action_buttons(prefix: str = "quick") -> None:
-    """PC/전체실행 공통 실행 버튼 묶음."""
-    st.markdown("### 실행 버튼")
-    st.caption("앱 시작 시 자동수집은 하지 않습니다. 아래 버튼 또는 GitHub Actions가 실행할 때만 갱신합니다.")
-    c0, c1, c2, c3, c4 = st.columns(5)
-    with c0:
-        if st.button("① 일정표 자동수집", type="primary", key=f"{prefix}_collect_fixtures"):
-            with st.spinner("일정표 자동수집 중... TheSportsDB/설정 URL을 검사합니다."):
-                added, total, logs = quick_collect_fixtures()
-            if total:
-                st.success(f"일정표 source 저장 완료: 신규/정리 {added}건 · 전체 {total}건")
-            else:
-                st.warning("저장된 일정표가 없습니다. 수집 로그 또는 source URL 설정을 확인하세요.")
-            with st.expander("일정표 수집 로그", expanded=True):
-                st.dataframe(preview_df(logs, 200), width="stretch")
-    with c1:
-        if st.button("② 과거자료 자동수집", type="primary", key=f"{prefix}_collect_history"):
-            with st.spinner("football-data 시즌/리그/URL 자동 탐색 중..."):
-                added, total, logs = quick_collect_football_data()
-            if total:
-                st.success(f"과거자료 source 저장 완료: 신규/정리 {added}건 · 전체 {total}건")
-            else:
-                st.warning("저장된 과거자료가 없습니다. 탐색 로그를 확인하세요.")
-            with st.expander("과거자료 수집 로그", expanded=False):
-                st.dataframe(preview_df(logs, 200), width="stretch")
-    with c2:
-        if st.button("③ source → standard", type="primary", key=f"{prefix}_standardize"):
-            result = run_standardize_all()
-            st.success("표준화 완료")
-            st.dataframe(pd.DataFrame([{"파일": k, "건수": v} for k, v in result.items()]), width="stretch")
-    with c3:
-        if st.button("④ 분석/모바일 생성", type="primary", key=f"{prefix}_analysis"):
-            analysis, mobile = run_analysis()
-            if analysis.empty:
-                st.warning("분석 결과가 없습니다. 일정표/승부식/현재자료를 먼저 저장하세요. 과거자료만으로 추천하지 않습니다.")
-            else:
-                st.success(f"분석 완료: analysis {len(analysis)}건 · mobile {len(mobile)}건")
-                show_mobile_cards()
-    with c4:
-        if st.button("⑤ 전체 실행", type="primary", key=f"{prefix}_run_all"):
-            with st.spinner("일정표 수집 → 과거자료 수집 → 표준화 → 분석 → 모바일 추천 생성 중..."):
-                fx_added, fx_total, fx_logs = quick_collect_fixtures()
-                hist_added, hist_total, hist_logs = quick_collect_football_data()
-                result = quick_build_pipeline()
-            st.success(f"전체 실행 완료 · 일정표 source {fx_total}건 · 과거자료 source {hist_total}건 · 모바일 {result.get('mobile_recommendations', 0)}건")
-            st.dataframe(pd.DataFrame([{"파일": k, "건수": v} for k, v in result.items()]), width="stretch")
-
-def tab_run_all() -> None:
-    st.subheader("전체실행")
-    st.caption("수집 → 표준화 → 승부식 분석 → 모바일 추천 생성까지 한 곳에서 실행합니다.")
-    st.info("라이브스코어는 일정표 기준만 사용합니다. 예정 경기가 없으면 모바일 추천카드는 생성하지 않습니다.")
-    render_action_buttons("run_all")
-    st.divider()
-    c1, c2, c3 = st.columns(3)
-    c1.metric("일정표 source", file_count(SOURCE_FILES["livescore_fixtures"]))
-    c2.metric("과거자료 source", file_count(SOURCE_FILES["football_data"]))
-    c3.metric("모바일 추천", file_count(OUTPUT_FILES["mobile_recommendations"]))
-    with st.expander("필수 진행 순서", expanded=True):
-        st.markdown("""
-        1. **전체실행 → 일정표 자동수집**으로 오늘/예정 경기 갱신  
-        2. **승부식 탭**에서 실제 승부식/기준점 저장 또는 예정경기 기준 승부식 생성  
-        3. **자료 입력 탭**에서 감독·부상·라인업·뉴스 저장  
-        4. **전체실행**에서 과거자료 수집/표준화/분석 실행  
-        5. **모바일 추천**에서 카드 확인  
-        """)
-
-# ---------------------- UI ----------------------
-
-def header() -> None:
-    st.markdown("""
-    <div style="padding:16px 0 10px 0;">
-      <div style="font-size:34px;font-weight:900;">⚽ 마루 스포츠 분석가</div>
-      <div style="font-size:15px;color:#6b7280;margin-top:6px;">일정표 기준 → 수집원별 저장 → 표준화 → 승부식 분석 → 모바일 추천카드 → 허브/구글시트</div>
-      <div style="margin-top:10px;padding:12px 14px;border-radius:14px;background:#f9fafb;border:1px solid #e5e7eb;font-size:14px;line-height:1.6;">
-        <b>원칙:</b> 일정표는 자동수집 우선 · 라이브스코어는 일정표 기준만 · 한 사이트 의존 금지 · football-data는 과거자료 보조 · 감독/부상/라인업/뉴스는 source별 보완 · 자동구매/자동결제 없음
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-
-def metric_board() -> None:
-    cols = st.columns(6)
-    cols[0].metric("일정표 source", file_count(SOURCE_FILES["livescore_fixtures"]))
-    cols[1].metric("과거자료 source", file_count(SOURCE_FILES["football_data"]))
-    cols[2].metric("현재자료 manual", file_count(SOURCE_FILES["manual"]))
-    cols[3].metric("예정경기 standard", file_count(STANDARD_FILES["upcoming_fixtures"]))
-    cols[4].metric("승부식 standard", file_count(STANDARD_FILES["markets"]))
-    cols[5].metric("모바일 카드", file_count(OUTPUT_FILES["mobile_recommendations"]))
-
-
-def show_table(filename: str, title: str, rows: int = 80) -> None:
-    df = read_csv(filename)
-    st.markdown(f"**{title}** · {len(df)}건")
-    if df.empty:
-        st.info("저장된 자료가 없습니다.")
-        return
-    st.dataframe(preview_df(df, rows), width="stretch")
-    st.download_button(f"{title} CSV 다운로드", df.to_csv(index=False).encode("utf-8-sig"), filename, "text/csv", key=f"download_{filename}_{title}")
-
-
-def save_input_to_source(source_key: str, input_df: pd.DataFrame, subset_default: List[str]) -> None:
-    if input_df.empty:
-        st.warning("저장할 자료가 없습니다.")
-        return
-    df = add_source_meta(input_df, source_key)
-    subset = [c for c in subset_default if c in df.columns] or list(df.columns[:3])
-    added, total = merge_csv(SOURCE_FILES[source_key], df, subset)
-    st.success(f"{SOURCE_FILES[source_key]} 저장 완료: 신규/정리 {added}건 · 전체 {total}건")
-
-
-def tab_pc_monitor() -> None:
-    st.subheader("PC 모니터링")
-    st.caption("대용량 CSV 전체 표시 금지. 건수와 최근 일부만 보여줍니다.")
-    render_action_buttons("pc")
-    st.divider()
+def standardize_fixtures() -> Tuple[pd.DataFrame, str]:
+    src = read_csv(SOURCE_FILES["source_livescore_fixtures"])
+    if src.empty:
+        write_csv(STANDARD_FILES["standard_upcoming_fixtures"], pd.DataFrame())
+        return pd.DataFrame(), "일정표 source 없음"
     rows = []
-    for group_name, group in [("source", SOURCE_FILES), ("standard", STANDARD_FILES), ("output", OUTPUT_FILES)]:
-        for name, filename in group.items():
-            rows.append({"구분": group_name, "이름": name, "파일": filename, "건수": file_count(filename)})
-    st.dataframe(pd.DataFrame(rows), width="stretch")
-    for filename, title in [(OUTPUT_FILES["error_logs"], "최근 오류 로그"), (OUTPUT_FILES["run_logs"], "실행 로그"), (OUTPUT_FILES["hub_send_logs"], "허브 전송 로그")]:
-        with st.expander(title, expanded=False):
-            show_table(filename, title, 100)
-    with st.expander("모바일 추천 미리보기", expanded=True):
-        show_table(OUTPUT_FILES["mobile_recommendations"], "mobile_recommendations", 50)
+    for _, r in src.iterrows():
+        date, home, away = normalize_date(r.get("date")), clean(r.get("home_team")), clean(r.get("away_team"))
+        if not date or not home or not away:
+            continue
+        hs, aw = clean(r.get("home_score")), clean(r.get("away_score"))
+        # 예정경기만 추천 대상. 점수 있으면 완료 경기라 제외.
+        if hs or aw:
+            continue
+        rows.append({
+            "match_id": clean(r.get("match_id")) or f"up_{date}_{home}_{away}".replace(" ", "_"),
+            "date": date,
+            "kickoff_kst": clean(r.get("kickoff_kst")),
+            "sport": clean(r.get("sport")) or "축구",
+            "country": clean(r.get("country")),
+            "league": clean(r.get("league")),
+            "home_team": home,
+            "away_team": away,
+            "status": "SCHEDULED",
+            "source": clean(r.get("source")) or "fixture_source",
+        })
+    df = pd.DataFrame(rows).drop_duplicates(subset=["match_id"], keep="last") if rows else pd.DataFrame()
+    write_csv(STANDARD_FILES["standard_upcoming_fixtures"], df)
+    return df, f"예정경기 {len(df)}건 표준화"
 
 
-def csv_input_block(label: str, sample: str, key: str) -> pd.DataFrame:
-    st.download_button(f"{label} CSV 양식 다운로드", sample.encode("utf-8-sig"), f"{key}_sample.csv", "text/csv", key=f"down_{key}")
-    text = st.text_area(f"{label} CSV 붙여넣기", height=130, placeholder=sample, key=f"text_{key}")
-    uploaded = st.file_uploader(f"또는 {label} CSV 업로드", type=["csv"], key=f"upload_{key}")
-    if uploaded is not None:
-        return normalize_columns(pd.read_csv(uploaded, dtype=str).fillna(""))
-    if clean_text(text):
-        return parse_csv_text(text)
-    return pd.DataFrame()
+def standardize_history() -> Tuple[pd.DataFrame, str]:
+    src = read_csv(SOURCE_FILES["source_football_data"])
+    if src.empty:
+        write_csv(STANDARD_FILES["standard_history_matches"], pd.DataFrame())
+        return pd.DataFrame(), "과거자료 source 없음"
+    rows = []
+    for _, r in src.iterrows():
+        date, home, away = normalize_date(r.get("date")), clean(r.get("home_team")), clean(r.get("away_team"))
+        hs, aw = safe_int(r.get("home_score")), safe_int(r.get("away_score"))
+        if not date or not home or not away or hs is None or aw is None:
+            continue
+        rows.append({
+            "match_id": clean(r.get("match_id")) or f"hist_{date}_{home}_{away}".replace(" ", "_"),
+            "date": date,
+            "league": clean(r.get("league")),
+            "league_code": clean(r.get("league_code")),
+            "home_team": home,
+            "away_team": away,
+            "home_score": hs,
+            "away_score": aw,
+            "status": "FT",
+            "source": clean(r.get("source")) or "history_source",
+        })
+    df = pd.DataFrame(rows).drop_duplicates(subset=["match_id"], keep="last") if rows else pd.DataFrame()
+    write_csv(STANDARD_FILES["standard_history_matches"], df)
+    return df, f"과거 완료경기 {len(df)}건 표준화"
 
 
-def tab_fixtures() -> None:
-    st.subheader("일정표")
-    st.caption("라이브스코어/토토 화면은 경기 일정표 기준만 사용합니다. 매일 수동 입력하지 않도록 자동수집을 먼저 둡니다.")
-    st.markdown("### 일정표 자동수집")
-    st.info("기본은 TheSportsDB 리그별 예정경기 API를 사용합니다. 필요하면 Streamlit Secrets에 THESPORTSDB_LEAGUE_IDS 또는 AUTO_FIXTURE_URLS를 넣어 다른 일정표 URL도 자동으로 붙일 수 있습니다.")
-    league_text = st.text_area("자동수집 리그 ID", value=", ".join([f"{k}={v}" for k, v in THESPORTSDB_DEFAULT_LEAGUES.items()]), height=80)
-    custom_url_text = st.text_area("추가 일정표 URL 선택 입력", value=secret_value("AUTO_FIXTURE_URLS", ""), height=70, placeholder="CSV/JSON 일정표 URL을 줄바꿈 또는 쉼표로 입력")
-    if st.button("일정표 자동수집 실행", type="primary", key="fixture_auto_collect_tab"):
-        with st.spinner("일정표 자동수집 중..."):
-            added, total, logs = quick_collect_fixtures(parse_league_id_text(league_text), parse_csv_list(custom_url_text))
-        if total:
-            st.success(f"일정표 source 저장 완료: 신규/정리 {added}건 · 전체 {total}건")
-        else:
-            st.warning("자동수집된 일정표가 없습니다. 리그 ID/API 키/URL을 확인하세요.")
-        with st.expander("일정표 자동수집 로그", expanded=True):
-            st.dataframe(preview_df(logs, 200), width="stretch")
-    st.divider()
-    st.markdown("### 수동 보완 입력")
-    st.caption("자동수집에서 빠진 경기만 보완합니다. 매일 전체를 수동으로 넣는 용도가 아닙니다.")
-    sample = """date,kickoff_kst,sport,league,home_team,away_team,status,source,match_id,odds_home,odds_draw,odds_away
-2026-07-10,20:00,축구,K리그1,울산,전북,SCHEDULED,livescore_copy,ls_001,1.90,3.25,3.80
-2026-07-10,22:00,축구,K리그1,서울,포항,SCHEDULED,livescore_copy,ls_002,2.10,3.10,3.20
-"""
-    df = csv_input_block("일정표", sample, "fixtures")
-    if st.button("일정표 source 저장", type="primary"):
-        if not df.empty and "match_id" not in df.columns:
-            df["match_id"] = [f"ls_{normalize_date(r.get('date'))}_{clean_text(r.get('home_team'))}_{clean_text(r.get('away_team'))}".replace(" ", "_") for _, r in df.iterrows()]
-        save_input_to_source("livescore_fixtures", df, ["match_id", "date", "home_team", "away_team"])
-    show_table(SOURCE_FILES["livescore_fixtures"], "source_livescore_fixtures", 80)
+def normalize_team_name(name: str) -> str:
+    n = clean(name).lower()
+    for token in [" fc", " cf", " afc", " utd", " united", ".", "-", "_"]:
+        n = n.replace(token, " ")
+    return " ".join(n.split())
 
 
-def tab_market_photo() -> None:
-    st.subheader("승부식")
-    st.caption("프로토 승부식 설명판 기준: 승무패/핸디캡/언더오버/전반/한경기조합/SUM/더블찬스/기타.")
-    st.dataframe(pd.DataFrame(MARKET_TEMPLATES), width="stretch")
-    sample = """match_id,market_type,line,choices,source
-ls_001,승무패,,홈승|무|원정승,proto_manual
-ls_001,언더/오버,2.5,언더|오버,proto_manual
-ls_001,핸디캡,+1.0,홈핸디|원정핸디,proto_manual
-"""
-    df = csv_input_block("실제 승부식/기준점", sample, "proto_markets")
-    c1, c2 = st.columns(2)
-    with c1:
-        if st.button("실제 승부식 source 저장", type="primary"):
-            save_input_to_source("proto_markets", df, ["match_id", "market_type", "line"])
-    with c2:
-        if st.button("예정경기 기준 승부식 생성"):
-            fixtures = read_csv(STANDARD_FILES["upcoming_fixtures"])
-            if fixtures.empty:
-                st.warning("standard_upcoming_fixtures.csv가 없습니다. 먼저 표준화 실행이 필요합니다.")
-            else:
-                markets = build_markets(fixtures); write_csv(STANDARD_FILES["markets"], markets); st.success(f"승부식 생성 완료: {len(markets)}건")
-    show_table(STANDARD_FILES["markets"], "standard_markets", 100)
+def team_similarity(a: str, b: str) -> float:
+    aa, bb = normalize_team_name(a), normalize_team_name(b)
+    if not aa or not bb:
+        return 0.0
+    if aa == bb:
+        return 1.0
+    if aa in bb or bb in aa:
+        return 0.88
+    return SequenceMatcher(None, aa, bb).ratio()
 
 
-def tab_sources() -> None:
-    st.subheader("수집원 관리")
-    st.caption("사이트마다 분류 저장합니다. football-data는 과거 결과 source 하나일 뿐입니다.")
-    st.markdown("### football-data 자동 탐색")
-    c1, c2 = st.columns([1, 2])
-    with c1:
-        season_text = st.text_input("시즌 후보", value=", ".join(auto_season_codes()[:4]))
-        selected_leagues = st.multiselect("리그 후보", list(LEAGUE_NAMES.keys()), default=["E0", "E1", "D1", "SP1", "I1", "F1"], format_func=lambda x: f"{x} · {LEAGUE_NAMES.get(x, x)}")
-    with c2:
-        st.info("URL 수동 복사 금지. 시즌 후보 × 리그 후보 × URL 후보를 자동 검사하고 실패 주소는 건너뜁니다.")
-        st.write("자동 시즌 예시:", ", ".join(auto_season_codes()))
-    if st.button("football-data 자동 탐색 저장", type="primary"):
-        seasons = [s.strip() for s in season_text.split(",") if s.strip()] or auto_season_codes()[:4]
-        if not selected_leagues:
-            st.warning("리그 후보를 하나 이상 선택하세요.")
-        else:
-            with st.spinner("football-data 시즌/리그/URL 자동 탐색 중..."):
-                df_new, logs = fetch_football_data(seasons, selected_leagues)
-            if not logs.empty:
-                merge_csv(OUTPUT_FILES["run_logs"], logs, ["time", "source", "season", "league_code", "url"])
-            if df_new.empty:
-                st.warning("저장 가능한 과거자료가 없습니다. 실패 주소는 로그에 기록됩니다.")
-            else:
-                added, total = merge_csv(SOURCE_FILES["football_data"], df_new, ["match_id"])
-                st.success(f"football-data 자동 탐색 저장 {total}건 · 신규/정리 {added}건 · 실패 주소는 자동 건너뜀")
-            with st.expander("탐색 로그", expanded=False):
-                st.dataframe(preview_df(logs, 200), width="stretch")
-
-    st.markdown("### 기타 source CSV 저장")
-    source_options = ["livescore_team_form", "livescore_h2h", "livescore_news", "sportmonks", "thesportsdb", "manual"]
-    source_key = st.selectbox("저장할 source", source_options, format_func=lambda x: SOURCE_FILES[x])
-    sample = "team,league,recent5,home_wins,home_draws,home_losses,away_wins,away_draws,away_losses,note\n울산,K리그1,W-W-D-L-W,4,1,0,2,1,2,홈 강세\n"
-    df = csv_input_block("선택 source", sample, f"source_{source_key}")
-    if st.button("선택 source 저장/추가"):
-        save_input_to_source(source_key, df, ["match_id", "team", "date"])
-    with st.expander("source 파일 미리보기", expanded=False):
-        for _, filename in SOURCE_FILES.items():
-            show_table(filename, filename, 40)
-
-
-def tab_manual_input() -> None:
-    st.subheader("자료 입력")
-    st.caption("감독 취임일, 선수 영입/스카우트, 주전 부상, 결장, 라인업, 뉴스/공지 메모를 manual source로 저장합니다.")
-    sample = """team,coach,coach_start_date,transfers_in,transfers_out,scout_note,injuries,missing_players,suspended_players,key_injuries,formation,expected_lineup,key_players,news,note
-울산,홍길동,2026-03-01,공격수A,,신입 공격수 속도 우수,,수비수B,,주전 수비수 결장,4-2-3-1,선발 미확정,공격수A;미드필더C,라인업 발표 대기,라인업 확인 필요
-전북,김감독,2025-12-10,,미드필더D,중원 약화 가능,공격수E,,,공격 핵심 부상,4-3-3,선발 미확정,수비수F,원정 수비 불안 뉴스,원정 경기력 확인
-"""
-    df = csv_input_block("현재상태 manual", sample, "manual_current")
-    if st.button("manual source 저장", type="primary"):
-        save_input_to_source("manual", df, ["team"])
-    show_table(SOURCE_FILES["manual"], "source_manual", 80)
-
-
-def tab_standard_analysis() -> None:
-    st.subheader("표준화/분석")
-    st.caption("source 자료를 standard로 변환한 뒤, standard 자료만 읽어서 분석합니다.")
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        if st.button("source → standard 변환", type="primary"):
-            result = run_standardize_all(); st.success("표준화 완료"); st.dataframe(pd.DataFrame([{"파일": k, "건수": v} for k, v in result.items()]), width="stretch")
-    with c2:
-        if st.button("승부식 분석 실행", type="primary"):
-            analysis, mobile = run_analysis()
-            if analysis.empty: st.warning("분석 결과가 없습니다. 예정 경기 또는 승부식/자료가 부족합니다.")
-            else: st.success(f"분석 저장 완료: analysis {len(analysis)}건 · mobile {len(mobile)}건")
-    with c3:
-        st.info("예정 경기 없으면 추천카드가 만들어지지 않습니다. 과거 경기만으로 현재 추천을 만들지 않습니다.")
-    tabs = st.tabs(["예정경기", "과거자료", "팀흐름", "현재자료", "뉴스/H2H", "analysis", "mobile"])
-    with tabs[0]: show_table(STANDARD_FILES["upcoming_fixtures"], "standard_upcoming_fixtures", 80)
-    with tabs[1]: show_table(STANDARD_FILES["history_matches"], "standard_history_matches", 80)
-    with tabs[2]:
-        show_table(STANDARD_FILES["team_form"], "standard_team_form", 50); show_table(STANDARD_FILES["team_home_away"], "standard_team_home_away", 50)
-    with tabs[3]:
-        for key in ["coaches", "transfers", "injuries", "lineups"]: show_table(STANDARD_FILES[key], STANDARD_FILES[key], 50)
-    with tabs[4]:
-        show_table(STANDARD_FILES["h2h"], "standard_h2h", 50); show_table(STANDARD_FILES["news_flags"], "standard_news_flags", 50)
-    with tabs[5]: show_table(OUTPUT_FILES["analysis_scores"], "analysis_scores", 100)
-    with tabs[6]: show_mobile_cards()
-
-
-def card_html(row: Dict) -> str:
-    return f"""
-    <div style="border:1px solid #e5e7eb;border-radius:16px;padding:16px;margin:10px 0;background:white;box-shadow:0 1px 2px rgba(0,0,0,0.04);">
-      <div style="font-size:13px;color:#6b7280;">{clean_text(row.get('league'))} · {clean_text(row.get('date_time'))}</div>
-      <div style="font-size:22px;font-weight:900;margin:6px 0;">{clean_text(row.get('match'))}</div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0;">
-        <span style="background:#eef2ff;border-radius:999px;padding:6px 10px;">승부식 <b>{clean_text(row.get('market_type'))}</b></span>
-        <span style="background:#f3f4f6;border-radius:999px;padding:6px 10px;">기준 <b>{clean_text(row.get('line')) or '-'}</b></span>
-        <span style="background:#ecfdf5;border-radius:999px;padding:6px 10px;">추천 <b>{clean_text(row.get('pick'))}</b></span>
-        <span style="background:#fff7ed;border-radius:999px;padding:6px 10px;">신뢰도 <b>{clean_text(row.get('confidence'))}%</b></span>
-        <span style="background:#fef2f2;border-radius:999px;padding:6px 10px;">위험도 <b>{clean_text(row.get('risk'))}</b></span>
-        <span style="background:#f0f9ff;border-radius:999px;padding:6px 10px;">자료충분도 <b>{clean_text(row.get('data_quality'))}%</b></span>
-      </div>
-      <div style="font-size:14px;line-height:1.55;color:#374151;"><b>근거:</b> {clean_text(row.get('basis'))}</div>
-      <div style="font-size:14px;line-height:1.55;color:#b45309;margin-top:4px;"><b>부족자료:</b> {clean_text(row.get('missing_data')) or '없음'}</div>
-      <div style="font-size:12px;color:#6b7280;margin-top:8px;">자동구매 없음 · 자동결제 없음 · 사용자가 직접 판단</div>
-    </div>
-    """
-
-
-def show_mobile_cards() -> None:
-    df = read_csv(OUTPUT_FILES["mobile_recommendations"])
+def find_history_matches(history: pd.DataFrame, team: str, league: str = "", max_rows: int = 20) -> pd.DataFrame:
+    if history.empty:
+        return pd.DataFrame()
+    df = history.copy()
+    if league and "league" in df.columns:
+        league_mask = df["league"].astype(str).str.lower() == league.lower()
+        if league_mask.any():
+            df = df[league_mask]
+    sims_home = df["home_team"].astype(str).apply(lambda x: team_similarity(x, team))
+    sims_away = df["away_team"].astype(str).apply(lambda x: team_similarity(x, team))
+    df = df[(sims_home >= 0.72) | (sims_away >= 0.72)].copy()
     if df.empty:
-        st.info("모바일 추천카드가 없습니다. 예정 경기와 분석자료를 먼저 저장하세요.")
-        return
-    for _, row in preview_df(df, 30).iterrows():
-        st.markdown(card_html(row.to_dict()), unsafe_allow_html=True)
-    with st.expander("mobile_recommendations.csv 원자료", expanded=False):
-        st.dataframe(preview_df(df, 100), width="stretch")
+        return df
+    df["_sim"] = [max(h, a) for h, a in zip(sims_home.loc[df.index], sims_away.loc[df.index])]
+    df = df.sort_values(["date", "_sim"], ascending=[False, False]).head(max_rows)
+    return df.drop(columns=["_sim"], errors="ignore")
 
 
-def tab_mobile() -> None:
-    st.subheader("모바일 추천")
-    st.caption("최종 확인용입니다. 자동구매/자동결제는 없습니다.")
-    show_mobile_cards()
-
-
-def tab_hub() -> None:
-    st.subheader("허브/구글시트 전송")
-    st.caption("Streamlit secrets에 GAS_WEBAPP_URL 또는 GOOGLE_SHEET_HUB_URL이 있으면 전송합니다.")
-    st.metric("허브 URL", "ON" if get_hub_url() else "OFF")
-    send_target = st.selectbox("전송 대상", ["mobile_recommendations", "analysis_scores", "all_standard_counts", "all_source_counts"])
-    if st.button("허브/구글시트 전송", type="primary"):
-        if send_target == "mobile_recommendations":
-            df = read_csv(OUTPUT_FILES["mobile_recommendations"]); data = {"rows": df.to_dict(orient="records")}; rows = len(df)
-        elif send_target == "analysis_scores":
-            df = read_csv(OUTPUT_FILES["analysis_scores"]); data = {"rows": df.to_dict(orient="records")}; rows = len(df)
-        elif send_target == "all_standard_counts":
-            rows_list = [{"name": name, "filename": filename, "rows": file_count(filename)} for name, filename in STANDARD_FILES.items()]; data = {"counts": rows_list}; rows = len(rows_list)
+def calc_team_form(history: pd.DataFrame, team: str, league: str = "", n: int = 10) -> Dict[str, Any]:
+    df = find_history_matches(history, team, league, max_rows=n)
+    wins = draws = losses = gf = ga = 0
+    form = []
+    for _, r in df.iterrows():
+        home, away = clean(r.get("home_team")), clean(r.get("away_team"))
+        hs, aw = safe_int(r.get("home_score"), 0), safe_int(r.get("away_score"), 0)
+        if team_similarity(home, team) >= team_similarity(away, team):
+            f, a = hs, aw
         else:
-            rows_list = [{"name": name, "filename": filename, "rows": file_count(filename)} for name, filename in SOURCE_FILES.items()]; data = {"counts": rows_list}; rows = len(rows_list)
-        ok, msg = send_hub(send_target, data); log_hub_result(send_target, ok, msg, rows)
-        if ok: st.success(msg)
-        else: st.warning(msg)
-    show_table(OUTPUT_FILES["hub_send_logs"], "hub_send_logs", 100)
-
-
-
-# ---------------------- 백엔드 진단 / 가상 테스트 ----------------------
-
-def source_required_fields(filename: str) -> List[str]:
-    mapping = {
-        SOURCE_FILES["livescore_fixtures"]: ["date", "home_team", "away_team"],
-        SOURCE_FILES["football_data"]: ["date", "home_team", "away_team", "home_score", "away_score"],
-        SOURCE_FILES["proto_markets"]: ["match_id", "market_type"],
-        SOURCE_FILES["manual"]: ["team"],
-    }
-    return mapping.get(filename, [])
-
-
-def diagnose_file(filename: str, group_name: str) -> Dict:
-    df = read_csv(filename)
-    required = source_required_fields(filename)
-    missing_cols = [c for c in required if c not in df.columns]
-    empty_shell = "Y" if (not df.empty and required and missing_cols) else "N"
-    if df.empty:
-        status = "EMPTY"
-        reason = "저장된 자료 없음"
-    elif missing_cols:
-        status = "SHELL_OR_BAD_COLUMNS"
-        reason = "필수 컬럼 부족: " + ", ".join(missing_cols)
-    else:
-        status = "OK"
-        reason = "읽기/필수 컬럼 확인"
+            f, a = aw, hs
+        gf += f; ga += a
+        if f > a:
+            wins += 1; form.append("W")
+        elif f == a:
+            draws += 1; form.append("D")
+        else:
+            losses += 1; form.append("L")
+    m = wins + draws + losses
     return {
-        "time": now_kst(), "group": group_name, "filename": filename, "rows": len(df),
-        "columns": ", ".join(list(df.columns)[:30]), "required": ", ".join(required),
-        "missing_columns": ", ".join(missing_cols), "empty_shell": empty_shell,
-        "status": status, "reason": reason,
+        "team": team, "league": league, "matches": m, "wins": wins, "draws": draws, "losses": losses,
+        "goals_for": gf, "goals_against": ga,
+        "avg_for": round(gf / m, 2) if m else 0, "avg_against": round(ga / m, 2) if m else 0,
+        "points": wins * 3 + draws, "form_text": "-".join(form[:5]) if form else "자료없음",
     }
 
 
-def diagnose_current_data() -> pd.DataFrame:
+def calc_home_away(history: pd.DataFrame, team: str, side: str, league: str = "", n: int = 10) -> Dict[str, Any]:
+    if history.empty:
+        return {"team": team, "side": side, "matches": 0, "wins": 0, "draws": 0, "losses": 0, "avg_for": 0, "avg_against": 0}
+    df = history.copy()
+    if league and "league" in df.columns:
+        ldf = df[df["league"].astype(str).str.lower() == league.lower()]
+        if not ldf.empty:
+            df = ldf
+    if side == "home":
+        mask = df["home_team"].astype(str).apply(lambda x: team_similarity(x, team) >= 0.72)
+    else:
+        mask = df["away_team"].astype(str).apply(lambda x: team_similarity(x, team) >= 0.72)
+    df = df[mask].sort_values("date", ascending=False).head(n)
+    wins = draws = losses = gf = ga = 0
+    for _, r in df.iterrows():
+        hs, aw = safe_int(r.get("home_score"), 0), safe_int(r.get("away_score"), 0)
+        f, a = (hs, aw) if side == "home" else (aw, hs)
+        gf += f; ga += a
+        if f > a: wins += 1
+        elif f == a: draws += 1
+        else: losses += 1
+    m = wins + draws + losses
+    return {"team": team, "side": side, "league": league, "matches": m, "wins": wins, "draws": draws, "losses": losses, "avg_for": round(gf/m,2) if m else 0, "avg_against": round(ga/m,2) if m else 0}
+
+
+def calc_h2h(history: pd.DataFrame, home: str, away: str, league: str = "", n: int = 10) -> Dict[str, Any]:
+    if history.empty:
+        return {"home_team": home, "away_team": away, "matches": 0, "home_wins": 0, "draws": 0, "away_wins": 0, "avg_goals": 0}
+    df = history.copy()
+    if league and "league" in df.columns:
+        ldf = df[df["league"].astype(str).str.lower() == league.lower()]
+        if not ldf.empty:
+            df = ldf
+    def involved(r):
+        h, a = clean(r.get("home_team")), clean(r.get("away_team"))
+        return ((team_similarity(h, home) >= .72 and team_similarity(a, away) >= .72) or
+                (team_similarity(h, away) >= .72 and team_similarity(a, home) >= .72))
+    df = df[df.apply(involved, axis=1)].sort_values("date", ascending=False).head(n)
+    hw = awn = d = goals = 0
+    for _, r in df.iterrows():
+        h, a = clean(r.get("home_team")), clean(r.get("away_team"))
+        hs, aas = safe_int(r.get("home_score"), 0), safe_int(r.get("away_score"), 0)
+        goals += hs + aas
+        home_is_listed_home = team_similarity(h, home) >= team_similarity(a, home)
+        if hs == aas:
+            d += 1
+        elif (hs > aas and home_is_listed_home) or (aas > hs and not home_is_listed_home):
+            hw += 1
+        else:
+            awn += 1
+    m = hw + d + awn
+    return {"home_team": home, "away_team": away, "league": league, "matches": m, "home_wins": hw, "draws": d, "away_wins": awn, "avg_goals": round(goals/m,2) if m else 0}
+
+
+def build_bigdata_tables(fixtures: pd.DataFrame, history: pd.DataFrame):
+    team_form_rows, home_away_rows, h2h_rows = [], [], []
+    for _, f in fixtures.iterrows():
+        league = clean(f.get("league"))
+        home, away = clean(f.get("home_team")), clean(f.get("away_team"))
+        if not home or not away:
+            continue
+        team_form_rows.append(calc_team_form(history, home, league, n=10))
+        team_form_rows.append(calc_team_form(history, away, league, n=10))
+        home_away_rows.append(calc_home_away(history, home, "home", league, n=10))
+        home_away_rows.append(calc_home_away(history, away, "away", league, n=10))
+        h2h_rows.append(calc_h2h(history, home, away, league, n=10))
+    tf = pd.DataFrame(team_form_rows).drop_duplicates(subset=["team", "league"], keep="last") if team_form_rows else pd.DataFrame()
+    ha = pd.DataFrame(home_away_rows).drop_duplicates(subset=["team", "league", "side"], keep="last") if home_away_rows else pd.DataFrame()
+    hh = pd.DataFrame(h2h_rows)
+    write_csv(STANDARD_FILES["standard_team_form"], tf)
+    write_csv(STANDARD_FILES["standard_team_home_away"], ha)
+    write_csv(STANDARD_FILES["standard_h2h"], hh)
+    return tf, ha, hh
+
+
+def parse_manual_sources():
+    manual = read_csv(SOURCE_FILES["source_manual"])
+    coaches = transfers = injuries = lineups = news = pd.DataFrame()
+    if not manual.empty:
+        coaches = manual[[c for c in ["team", "coach", "coach_start_date", "note"] if c in manual.columns]].dropna(how="all") if "coach" in manual.columns or "coach_start_date" in manual.columns else pd.DataFrame()
+        transfers = manual[[c for c in ["team", "transfers", "scouting_note", "note"] if c in manual.columns]].dropna(how="all") if "transfers" in manual.columns or "scouting_note" in manual.columns else pd.DataFrame()
+        injuries = manual[[c for c in ["team", "injuries", "missing_players", "note"] if c in manual.columns]].dropna(how="all") if "injuries" in manual.columns or "missing_players" in manual.columns else pd.DataFrame()
+        lineups = manual[[c for c in ["team", "lineup", "note"] if c in manual.columns]].dropna(how="all") if "lineup" in manual.columns else pd.DataFrame()
+        news = manual[[c for c in ["team", "news", "note"] if c in manual.columns]].dropna(how="all") if "news" in manual.columns else pd.DataFrame()
+    write_csv(STANDARD_FILES["standard_coaches"], coaches)
+    write_csv(STANDARD_FILES["standard_transfers"], transfers)
+    write_csv(STANDARD_FILES["standard_injuries"], injuries)
+    write_csv(STANDARD_FILES["standard_lineups"], lineups)
+    write_csv(STANDARD_FILES["standard_news_flags"], news)
+    return coaches, transfers, injuries, lineups, news
+
+
+def generate_markets(fixtures: pd.DataFrame) -> pd.DataFrame:
+    if fixtures.empty:
+        write_csv(STANDARD_FILES["standard_markets"], pd.DataFrame())
+        return pd.DataFrame()
+    # source_proto_markets can override/provide real markets
+    real = read_csv(SOURCE_FILES["source_proto_markets"])
     rows = []
-    for group_name, group in [("source", SOURCE_FILES), ("standard", STANDARD_FILES), ("output", OUTPUT_FILES)]:
-        for _, filename in group.items():
-            rows.append(diagnose_file(filename, group_name))
-    report = pd.DataFrame(rows)
-    write_csv("backend_diagnosis_report.csv", report)
+    if not real.empty and "match_id" in real.columns and "market_type" in real.columns:
+        rows = real.to_dict("records")
+    else:
+        for _, f in fixtures.iterrows():
+            mid = clean(f.get("match_id"))
+            for t in MARKET_TEMPLATES:
+                row = {"match_id": mid, "league": clean(f.get("league")), "home_team": clean(f.get("home_team")), "away_team": clean(f.get("away_team")), "source": "template_not_real_proto", "status": "TEMPLATE"}
+                row.update(t)
+                rows.append(row)
+    df = pd.DataFrame(rows)
+    write_csv(STANDARD_FILES["standard_markets"], df)
+    return df
+
+
+def find_manual_status(df: pd.DataFrame, team: str) -> Dict[str, str]:
+    if df.empty or "team" not in df.columns:
+        return {}
+    mask = df["team"].astype(str).apply(lambda x: team_similarity(x, team) >= .82)
+    if not mask.any():
+        return {}
+    return df[mask].iloc[-1].to_dict()
+
+
+def analyze_market(fixture: Dict[str, Any], market: Dict[str, Any], history: pd.DataFrame, team_form: pd.DataFrame, home_away: pd.DataFrame, h2h: pd.DataFrame, injuries: pd.DataFrame, lineups: pd.DataFrame, coaches: pd.DataFrame, transfers: pd.DataFrame, news: pd.DataFrame) -> Dict[str, Any]:
+    home, away, league = clean(fixture.get("home_team")), clean(fixture.get("away_team")), clean(fixture.get("league"))
+    home_form = calc_team_form(history, home, league, n=10)
+    away_form = calc_team_form(history, away, league, n=10)
+    home_home = calc_home_away(history, home, "home", league, n=10)
+    away_away = calc_home_away(history, away, "away", league, n=10)
+    h2h_stats = calc_h2h(history, home, away, league, n=10)
+    home_inj = find_manual_status(injuries, home); away_inj = find_manual_status(injuries, away)
+    home_line = find_manual_status(lineups, home); away_line = find_manual_status(lineups, away)
+    home_coach = find_manual_status(coaches, home); away_coach = find_manual_status(coaches, away)
+    home_trans = find_manual_status(transfers, home); away_trans = find_manual_status(transfers, away)
+    home_news = find_manual_status(news, home); away_news = find_manual_status(news, away)
+
+    data_score = 0
+    missing = []
+    if home_form["matches"] >= 5 and away_form["matches"] >= 5: data_score += 25
+    else: missing.append("최근 팀폼 부족")
+    if home_home["matches"] >= 3 and away_away["matches"] >= 3: data_score += 18
+    else: missing.append("홈/원정 흐름 부족")
+    if h2h_stats["matches"] >= 2: data_score += 12
+    else: missing.append("상대전적 부족")
+    if home_coach or away_coach: data_score += 10
+    else: missing.append("감독 취임일/전술 없음")
+    if home_inj or away_inj: data_score += 15
+    else: missing.append("부상/결장 없음")
+    if home_line or away_line: data_score += 10
+    else: missing.append("예상 라인업 없음")
+    if home_trans or away_trans or home_news or away_news: data_score += 10
+    else: missing.append("영입/뉴스/스카우트 없음")
+
+    home_power = home_form["points"] + home_home["wins"] * 1.8 + h2h_stats.get("home_wins", 0) * 1.2 + home_form["goals_for"] - home_form["goals_against"]
+    away_power = away_form["points"] + away_away["wins"] * 1.8 + h2h_stats.get("away_wins", 0) * 1.2 + away_form["goals_for"] - away_form["goals_against"]
+    diff = home_power - away_power
+    total_goal_flow = home_form["avg_for"] + away_form["avg_for"]
+    market_type = clean(market.get("market_type"))
+    line_value = clean(market.get("line_value"))
+
+    if data_score < 45:
+        pick, conf, risk = "분석불가", 0, "높음"
+    elif market_type == "승무패":
+        pick = "홈 우세" if diff >= 3 else "원정 우세" if diff <= -3 else "접전/무승부 주의"
+        conf = min(78, max(52, int(50 + abs(diff) * 2 + data_score * .18)))
+        risk = "낮음" if conf >= 70 else "중간" if conf >= 58 else "높음"
+    elif market_type == "언더오버":
+        threshold = 2.5
+        try: threshold = float(line_value or 2.5)
+        except Exception: pass
+        pick = "오버 우세" if total_goal_flow >= threshold + .35 else "언더 우세" if total_goal_flow <= threshold - .35 else "기준점 근접/주의"
+        conf = min(75, max(51, int(52 + abs(total_goal_flow-threshold)*14 + data_score*.16)))
+        risk = "낮음" if conf >= 70 else "중간" if conf >= 58 else "높음"
+    elif market_type == "핸디캡":
+        pick = "홈 핸디 우세" if diff >= 1.5 else "원정 핸디 우세" if diff <= -1.5 else "핸디 기준점 주의"
+        conf = min(74, max(50, int(51 + abs(diff)*1.5 + data_score*.14)))
+        risk = "중간" if conf >= 58 else "높음"
+    elif market_type == "더블찬스":
+        pick = "홈/무 안정" if diff >= 1 else "무/원정 안정" if diff <= -1 else "홈/원정 변동"
+        conf = min(80, max(55, int(55 + abs(diff)*1.4 + data_score*.16)))
+        risk = "낮음" if conf >= 70 else "중간"
+    else:
+        pick = "자료확인 필요" if data_score >= 45 else "분석불가"
+        conf = int(data_score * .7) if data_score >= 45 else 0
+        risk = "중간" if conf >= 58 else "높음"
+
+    reasons = [
+        f"홈 최근 {home_form['matches']}경기 {home_form['wins']}승 {home_form['draws']}무 {home_form['losses']}패",
+        f"원정 최근 {away_form['matches']}경기 {away_form['wins']}승 {away_form['draws']}무 {away_form['losses']}패",
+        f"홈 홈성적 {home_home['matches']}경기 {home_home['wins']}승",
+        f"원정 원정성적 {away_away['matches']}경기 {away_away['wins']}승",
+        f"상대전적 {h2h_stats['matches']}경기",
+    ]
+    return {
+        "created_at": now_text(), "match_id": clean(fixture.get("match_id")), "date": clean(fixture.get("date")), "kickoff_kst": clean(fixture.get("kickoff_kst")),
+        "sport": clean(fixture.get("sport")), "league": league, "home_team": home, "away_team": away,
+        "match": f"{home} vs {away}", "market_type": market_type, "line_value": line_value,
+        "pick": pick, "confidence": conf, "risk": risk, "data_sufficiency": min(100, data_score),
+        "missing_data": " / ".join(missing), "reasons": " / ".join(reasons),
+        "home_form": home_form["form_text"], "away_form": away_form["form_text"],
+        "auto_buy": "NO", "auto_payment": "NO",
+    }
+
+
+def run_standardize_and_analyze() -> Tuple[pd.DataFrame, pd.DataFrame, Dict[str, Any]]:
+    fixtures, fmsg = standardize_fixtures()
+    history, hmsg = standardize_history()
+    coaches, transfers, injuries, lineups, news = parse_manual_sources()
+    markets = generate_markets(fixtures)
+    tf, ha, hh = build_bigdata_tables(fixtures, history)
+
+    results = []
+    if not fixtures.empty and not markets.empty:
+        for _, f in fixtures.iterrows():
+            ms = markets[markets["match_id"].astype(str) == clean(f.get("match_id"))]
+            for _, m in ms.iterrows():
+                results.append(analyze_market(f.to_dict(), m.to_dict(), history, tf, ha, hh, injuries, lineups, coaches, transfers, news))
+    analysis = pd.DataFrame(results)
+    mobile = analysis[[c for c in ["created_at", "match_id", "match", "league", "date", "kickoff_kst", "market_type", "line_value", "pick", "confidence", "risk", "data_sufficiency", "missing_data", "reasons", "auto_buy", "auto_payment"] if c in analysis.columns]].copy() if not analysis.empty else pd.DataFrame()
+    write_csv(OUTPUT_FILES["analysis_scores"], analysis)
+    write_csv(OUTPUT_FILES["mobile_recommendations"], mobile)
+    diagnosis = build_diagnosis()
+    meta = {"fixtures_msg": fmsg, "history_msg": hmsg, "analysis_rows": len(analysis), "mobile_rows": len(mobile), "diagnosis": diagnosis}
+    log_run("standardize_analyze", "ok", f"analysis={len(analysis)}, mobile={len(mobile)}", meta)
+    return analysis, mobile, meta
+
+
+def build_diagnosis() -> Dict[str, Any]:
+    counts = file_counts()
+    missing = []
+    if counts.get("source_livescore_fixtures", 0) == 0: missing.append("일정표 source 없음")
+    if counts.get("source_football_data", 0) == 0: missing.append("과거자료 source 없음")
+    if counts.get("standard_team_form", 0) == 0: missing.append("팀 최근폼 계산 없음")
+    if counts.get("standard_team_home_away", 0) == 0: missing.append("홈/원정 계산 없음")
+    if counts.get("standard_h2h", 0) == 0: missing.append("상대전적 계산 없음")
+    if counts.get("standard_injuries", 0) == 0: missing.append("부상/결장 자료 없음")
+    if counts.get("standard_lineups", 0) == 0: missing.append("라인업 자료 없음")
+    if counts.get("standard_markets", 0) == 0: missing.append("승부식 자료 없음")
+    return {"time": now_text(), "counts": counts, "missing": missing, "hub_url": "ON" if get_hub_url() else "OFF"}
+
+
+def build_hub_payload(kind: str = "full_pipeline") -> Dict[str, Any]:
+    counts = file_counts()
+    payload = {
+        "app": APP_NAME, "version": APP_VERSION, "type": kind, "created_at": now_text(),
+        "counts": counts,
+        "diagnosis": build_diagnosis(),
+        "analysis_scores": read_csv(OUTPUT_FILES["analysis_scores"]).tail(300).to_dict("records"),
+        "mobile_recommendations": read_csv(OUTPUT_FILES["mobile_recommendations"]).tail(300).to_dict("records"),
+        "hub_send_logs": read_csv(OUTPUT_FILES["hub_send_logs"]).tail(50).to_dict("records"),
+    }
+    # include compact status for each file, not massive raw files
+    payload["source_preview"] = {k: read_csv(v).head(5).to_dict("records") for k, v in SOURCE_FILES.items() if os.path.exists(v)}
+    payload["standard_preview"] = {k: read_csv(v).head(5).to_dict("records") for k, v in STANDARD_FILES.items() if os.path.exists(v)}
+    return payload
+
+
+def save_hub_payload(payload: Dict[str, Any]) -> Tuple[str, str]:
+    ensure_dirs()
+    latest = OUTPUT_FILES["hub_payload_latest"]
+    queue = OUTPUT_FILES["hub_payload_queue"]
+    with open(latest, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    with open(queue, "a", encoding="utf-8") as f:
+        f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    return latest, queue
+
+
+def send_to_hub(payload: Dict[str, Any]) -> Tuple[bool, str]:
+    latest, queue = save_hub_payload(payload)
+    url = get_hub_url()
+    base_log = {"time": now_text(), "payload_type": payload.get("type", ""), "payload_latest": latest, "payload_queue": queue, "rows_mobile": len(payload.get("mobile_recommendations", [])), "hub_url": "ON" if url else "OFF"}
+    if not url:
+        msg = "허브 URL OFF: 실제 전송 대신 payload 저장 완료"
+        append_csv(OUTPUT_FILES["hub_send_logs"], pd.DataFrame([{**base_log, "status": "queued", "message": msg, "http_status": ""}]))
+        log_run("hub_send", "queued", msg)
+        return False, msg
+    try:
+        r = requests.post(url, json=payload, timeout=20)
+        ok = 200 <= r.status_code < 300
+        msg = f"HTTP {r.status_code}: {r.text[:300]}"
+        append_csv(OUTPUT_FILES["hub_send_logs"], pd.DataFrame([{**base_log, "status": "sent" if ok else "fail", "message": msg, "http_status": r.status_code}]))
+        log_run("hub_send", "sent" if ok else "fail", msg)
+        return ok, msg
+    except Exception as exc:
+        msg = f"허브 전송 오류: {exc}"
+        append_csv(OUTPUT_FILES["hub_send_logs"], pd.DataFrame([{**base_log, "status": "error", "message": msg, "http_status": ""}]))
+        log_error("hub_send", url, str(exc))
+        return False, msg
+
+
+def run_full_pipeline(auto_fixtures=True, auto_history=True, send_hub=True):
+    report = []
+    if auto_fixtures:
+        fx, logs = fetch_thesportsdb_fixtures()
+        n, total = append_csv(SOURCE_FILES["source_livescore_fixtures"], fx, ["match_id"])
+        append_csv(OUTPUT_FILES["run_logs"], logs.rename(columns={"status":"source_status"}) if not logs.empty else pd.DataFrame())
+        report.append(f"일정표 자동수집: 신규 {n}, 전체 {total}")
+        log_run("fixture_collect", "ok", report[-1])
+    if auto_history:
+        hist, hlogs = fetch_football_data(max_seasons=2)
+        n, total = append_csv(SOURCE_FILES["source_football_data"], hist, ["match_id"])
+        append_csv(OUTPUT_FILES["run_logs"], hlogs.rename(columns={"status":"source_status"}) if not hlogs.empty else pd.DataFrame())
+        report.append(f"과거자료 자동수집: 신규 {n}, 전체 {total}")
+        log_run("history_collect", "ok", report[-1])
+    analysis, mobile, meta = run_standardize_and_analyze()
+    report.append(f"분석/모바일 생성: analysis {len(analysis)}, mobile {len(mobile)}")
+    hub_msg = "허브 전송 생략"
+    if send_hub:
+        ok, hub_msg = send_to_hub(build_hub_payload("full_pipeline"))
+        report.append("허브: " + hub_msg)
     return report
 
 
-def mock_source_data() -> Dict[str, pd.DataFrame]:
-    today = datetime.now(KST).strftime("%Y-%m-%d")
+def make_status_report() -> str:
+    diag = build_diagnosis()
+    counts = diag["counts"]
+    lines = [f"# {APP_NAME} 상태 리포트", "", f"- version: {APP_VERSION}", f"- time: {now_text()}", f"- hub_url: {diag['hub_url']}", "", "## 파일별 저장 건수"]
+    for k, v in counts.items():
+        lines.append(f"- {k}: {v}")
+    lines += ["", "## 부족자료"]
+    if diag["missing"]:
+        lines += [f"- {m}" for m in diag["missing"]]
+    else:
+        lines.append("- 큰 부족자료 없음")
+    lines += ["", "## 최근 모바일 추천"]
+    mob = read_csv(OUTPUT_FILES["mobile_recommendations"]).tail(20)
+    if mob.empty:
+        lines.append("모바일 추천 없음")
+    else:
+        lines.append(mob.to_csv(index=False))
+    return "\n".join(lines)
+
+
+def make_log_bundle() -> bytes:
+    ensure_dirs()
+    report = make_status_report()
+    bio = BytesIO()
+    with zipfile.ZipFile(bio, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("MARU_STATUS_REPORT.md", report)
+        for path in [OUTPUT_FILES["hub_payload_latest"], OUTPUT_FILES["hub_payload_queue"]]:
+            if os.path.exists(path):
+                z.write(path, os.path.basename(path))
+        for group_name, group in [("source", SOURCE_FILES), ("standard", STANDARD_FILES), ("output", OUTPUT_FILES)]:
+            for name, path in group.items():
+                if os.path.exists(path):
+                    arc = f"{group_name}/{os.path.basename(path)}" if path.endswith(".csv") else os.path.basename(path)
+                    z.write(path, arc)
+    bio.seek(0)
+    return bio.read()
+
+
+def virtual_backend_test() -> Tuple[bool, str, Dict[str, Any]]:
+    # no overwrite of user data. Runs all major functions on in-memory frames and checks expected output shape.
     fixtures = pd.DataFrame([
-        {"match_id":"mock_001","date":today,"kickoff_kst":"20:00","sport":"축구","league":"가상리그","home_team":"울산","away_team":"전북","status":"SCHEDULED","source":"virtual_test"},
-        {"match_id":"mock_002","date":today,"kickoff_kst":"22:00","sport":"축구","league":"가상리그","home_team":"서울","away_team":"포항","status":"SCHEDULED","source":"virtual_test"},
+        {"match_id":"vt_001","date":"2026-07-10","kickoff_kst":"20:00","sport":"축구","league":"English Premier League","home_team":"Arsenal","away_team":"Chelsea","status":"SCHEDULED","source":"virtual"},
+        {"match_id":"vt_002","date":"2026-07-10","kickoff_kst":"22:00","sport":"축구","league":"Spanish La Liga","home_team":"Barcelona","away_team":"Athletic Bilbao","status":"SCHEDULED","source":"virtual"},
     ])
-    history_rows = []
-    teams = [("울산","전북"),("서울","포항"),("울산","서울"),("전북","포항")]
-    for i in range(24):
-        home, away = teams[i % len(teams)]
-        history_rows.append({"match_id":f"hist_mock_{i}","date":f"2026-06-{(i%28)+1:02d}","league":"가상리그","home_team":home,"away_team":away,"home_score":str((i*2)%4),"away_score":str((i+1)%3),"status":"FT","source":"virtual_history"})
-    history = pd.DataFrame(history_rows)
-    markets = pd.DataFrame([
-        {"match_id":"mock_001","market_type":"승무패","line":"","choices":"홈승|무|원정승","source":"virtual_proto"},
-        {"match_id":"mock_001","market_type":"언더/오버","line":"2.5","choices":"언더|오버","source":"virtual_proto"},
-        {"match_id":"mock_001","market_type":"핸디캡","line":"+1.0","choices":"홈핸디|원정핸디","source":"virtual_proto"},
-        {"match_id":"mock_002","market_type":"승무패","line":"","choices":"홈승|무|원정승","source":"virtual_proto"},
-        {"match_id":"mock_002","market_type":"더블찬스","line":"","choices":"홈/무|무/원정","source":"virtual_proto"},
-    ])
-    manual = pd.DataFrame([
-        {"team":"울산","league":"가상리그","coach":"가상감독A","coach_start_date":"2026-03-01","transfers_in":"공격수A","transfers_out":"","scout_note":"신규 공격수 속도 우수","injuries":"","missing_players":"","suspended_players":"","key_injuries":"","formation":"4-2-3-1","expected_lineup":"주전 대부분 가능","key_players":"공격수A;미드필더B","recent5":"W-W-D-W-L","home_wins":"4","home_draws":"1","home_losses":"0","away_wins":"2","away_draws":"1","away_losses":"2","news":"주전 공격수 선발 가능","note":"가상 테스트"},
-        {"team":"전북","league":"가상리그","coach":"가상감독B","coach_start_date":"2025-11-10","transfers_in":"","transfers_out":"미드필더D","scout_note":"중원 약화","injuries":"수비수C","missing_players":"수비수C","suspended_players":"","key_injuries":"주전 수비 결장","formation":"4-3-3","expected_lineup":"수비진 변동","key_players":"공격수E","recent5":"L-D-W-L-L","home_wins":"2","home_draws":"1","home_losses":"2","away_wins":"1","away_draws":"1","away_losses":"3","news":"주전 수비수 부상 결장","note":"가상 테스트"},
-        {"team":"서울","league":"가상리그","coach":"가상감독C","coach_start_date":"2026-01-20","transfers_in":"윙어K","transfers_out":"","scout_note":"측면 강화","injuries":"","missing_players":"","suspended_players":"","key_injuries":"","formation":"4-4-2","expected_lineup":"정상","key_players":"윙어K","recent5":"W-D-W-D-W","home_wins":"3","home_draws":"2","home_losses":"0","away_wins":"2","away_draws":"2","away_losses":"1","news":"라인업 정상","note":"가상 테스트"},
-        {"team":"포항","league":"가상리그","coach":"가상감독D","coach_start_date":"2024-09-01","transfers_in":"","transfers_out":"공격수Z","scout_note":"득점력 저하 가능","injuries":"공격수M","missing_players":"공격수M","suspended_players":"","key_injuries":"주전 공격 결장","formation":"3-5-2","expected_lineup":"공격수 대체","key_players":"수비수N","recent5":"L-L-D-W-L","home_wins":"1","home_draws":"2","home_losses":"2","away_wins":"1","away_draws":"0","away_losses":"4","news":"공격수 부상","note":"가상 테스트"},
-    ])
-    h2h = pd.DataFrame([
-        {"match_id":"mock_001","home_team":"울산","away_team":"전북","league":"가상리그","h2h_note":"최근 맞대결 홈 우세","home_h2h_wins":"3","draws":"1","away_h2h_wins":"1","source":"virtual_h2h"},
-        {"match_id":"mock_002","home_team":"서울","away_team":"포항","league":"가상리그","h2h_note":"서울 근소 우세","home_h2h_wins":"2","draws":"2","away_h2h_wins":"1","source":"virtual_h2h"},
-    ])
-    news = manual[["team", "league", "news", "note"]].copy()
-    return {
-        SOURCE_FILES["livescore_fixtures"]: fixtures,
-        SOURCE_FILES["football_data"]: history,
-        SOURCE_FILES["proto_markets"]: markets,
-        SOURCE_FILES["manual"]: manual,
-        SOURCE_FILES["livescore_h2h"]: h2h,
-        SOURCE_FILES["livescore_news"]: news,
-        SOURCE_FILES["livescore_team_form"]: manual,
-    }
+    hist_rows = []
+    teams = [("Arsenal","Chelsea","English Premier League"),("Barcelona","Athletic Bilbao","Spanish La Liga")]
+    for home, away, league in teams:
+        for i in range(12):
+            hist_rows.append({"match_id":f"vh_{home}_{i}","date":f"2026-06-{str(i+1).zfill(2)}","league":league,"home_team":home,"away_team":away,"home_score":2 if i%3 else 1,"away_score":1 if i%4 else 2,"status":"FT","source":"virtual"})
+            hist_rows.append({"match_id":f"va_{away}_{i}","date":f"2026-05-{str(i+1).zfill(2)}","league":league,"home_team":"Other","away_team":away,"home_score":1,"away_score":1 if i%2 else 2,"status":"FT","source":"virtual"})
+    history = pd.DataFrame(hist_rows)
+    tf, ha, hh = build_bigdata_tables(fixtures, history)
+    markets = []
+    for _, f in fixtures.iterrows():
+        for t in MARKET_TEMPLATES[:3]:
+            r = {"match_id":f["match_id"],"league":f["league"],"home_team":f["home_team"],"away_team":f["away_team"],"source":"virtual","status":"VIRTUAL"}; r.update(t); markets.append(r)
+    markets = pd.DataFrame(markets)
+    empty = pd.DataFrame()
+    results = []
+    for _, f in fixtures.iterrows():
+        for _, m in markets[markets["match_id"] == f["match_id"]].iterrows():
+            results.append(analyze_market(f.to_dict(), m.to_dict(), history, tf, ha, hh, empty, empty, empty, empty, empty))
+    analysis = pd.DataFrame(results)
+    payload = {"app":APP_NAME,"version":APP_VERSION,"type":"virtual_test","created_at":now_text(),"analysis_scores":analysis.to_dict("records"),"mobile_recommendations":analysis.to_dict("records"),"counts":{"fixtures":len(fixtures),"history":len(history),"markets":len(markets),"analysis":len(analysis)}}
+    ok = len(fixtures)==2 and len(history)>=20 and len(tf)>=4 and len(ha)>=4 and len(hh)==2 and len(analysis)==6 and "pick" in analysis.columns and len(payload["mobile_recommendations"])==6
+    details = {"fixtures":len(fixtures),"history":len(history),"team_form":len(tf),"home_away":len(ha),"h2h":len(hh),"markets":len(markets),"analysis":len(analysis),"payload_mobile":len(payload["mobile_recommendations"])}
+    return ok, "가상 백엔드 전체 테스트 통과" if ok else "가상 백엔드 테스트 실패", details
 
 
-def run_virtual_backend_test() -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """허브/구글시트가 아직 없어도 전체 흐름을 가상 데이터로 검증한다. 실제 data 폴더는 건드리지 않는다."""
-    global DATA_DIR
-    original_dir = DATA_DIR
-    checks = []
-    with tempfile.TemporaryDirectory() as tmp:
-        DATA_DIR = tmp
-        ensure_data_dir()
-        for filename, df in mock_source_data().items():
-            write_csv(filename, df)
-            checks.append({"step":"mock_source_write","target":filename,"ok":"Y","rows":len(df),"message":"가상 source 저장"})
-        standard_counts = run_standardize_all()
-        for name, rows in standard_counts.items():
-            checks.append({"step":"standardize","target":name,"ok":"Y" if rows else "N","rows":rows,"message":"standard 변환"})
-        analysis, mobile = run_analysis()
-        checks.append({"step":"analysis","target":"analysis_scores.csv","ok":"Y" if len(analysis) else "N","rows":len(analysis),"message":"승부식별 분석 생성"})
-        checks.append({"step":"mobile","target":"mobile_recommendations.csv","ok":"Y" if len(mobile) else "N","rows":len(mobile),"message":"모바일 추천카드 생성"})
-        payload = {"app":"MARU SPORTS ANALYZER","type":"dry_run_mobile_recommendations","created_at":now_kst(),"data":{"rows":mobile.to_dict(orient="records")}}
-        payload_ok = bool(payload["data"]["rows"] and {"match_id","market_type","pick","confidence","risk","data_quality"}.issubset(set(mobile.columns)))
-        checks.append({"step":"hub_dry_run","target":"payload_shape","ok":"Y" if payload_ok else "N","rows":len(payload["data"]["rows"]),"message":"허브 payload 구조 검사"})
-        diag = diagnose_current_data()
-        DATA_DIR = original_dir
-    return pd.DataFrame(checks), preview_df(analysis, 20), preview_df(mobile, 20)
-
-
-def missing_data_summary() -> pd.DataFrame:
-    fixtures = read_csv(STANDARD_FILES["upcoming_fixtures"])
-    if fixtures.empty:
-        return pd.DataFrame([{"item":"예정경기","status":"MISSING","message":"standard_upcoming_fixtures.csv 0건: 일정표 자동수집/표준화 필요"}])
-    checks = [
-        ("승부식", STANDARD_FILES["markets"], "standard_markets.csv"),
-        ("과거자료", STANDARD_FILES["history_matches"], "standard_history_matches.csv"),
-        ("감독 취임일", STANDARD_FILES["coaches"], "standard_coaches.csv"),
-        ("주전 부상/결장", STANDARD_FILES["injuries"], "standard_injuries.csv"),
-        ("예상 라인업", STANDARD_FILES["lineups"], "standard_lineups.csv"),
-        ("영입/이적/스카우트", STANDARD_FILES["transfers"], "standard_transfers.csv"),
-        ("뉴스/공지", STANDARD_FILES["news_flags"], "standard_news_flags.csv"),
-        ("상대전적", STANDARD_FILES["h2h"], "standard_h2h.csv"),
-        ("홈/원정 흐름", STANDARD_FILES["team_home_away"], "standard_team_home_away.csv"),
-    ]
-    rows = []
-    for label, filename, full in checks:
-        cnt = file_count(filename)
-        rows.append({"item": label, "status": "OK" if cnt else "MISSING", "rows": cnt, "message": full + (" 확인됨" if cnt else " 없음")})
-    return pd.DataFrame(rows)
-
-
-def tab_backend_diagnosis() -> None:
-    st.subheader("백엔드 진단 / 가상 테스트")
-    st.caption("구글시트/허브 설정이 없어도 가상 데이터로 수집→표준화→분석→모바일추천→허브 payload까지 검사합니다.")
-    c1, c2, c3 = st.columns(3)
+def render_download_bar(location: str):
+    st.markdown("#### 📦 로그/허브 자료 받기")
+    c1, c2, c3, c4 = st.columns(4)
+    report = make_status_report().encode("utf-8-sig")
+    bundle = make_log_bundle()
     with c1:
-        if st.button("현재 저장자료 진단", type="primary"):
-            report = diagnose_current_data()
-            st.success("현재 자료 진단 완료")
-            st.dataframe(report, width="stretch")
+        st.download_button("📄 상태 리포트 받기", report, "MARU_STATUS_REPORT.md", "text/markdown", key=f"report_{location}")
     with c2:
-        if st.button("가상 백엔드 전체 테스트", type="primary"):
-            checks, analysis, mobile = run_virtual_backend_test()
-            if (checks["ok"] == "N").any():
-                st.warning("가상 테스트에서 실패 단계가 있습니다.")
-            else:
-                st.success("가상 테스트 통과: source→standard→analysis→mobile→hub dry-run")
-            st.dataframe(checks, width="stretch")
-            with st.expander("가상 analysis_scores", expanded=False):
-                st.dataframe(analysis, width="stretch")
-            with st.expander("가상 mobile_recommendations", expanded=True):
-                st.dataframe(mobile, width="stretch")
+        st.download_button("📦 전체 로그 ZIP 받기", bundle, "MARU_LOG_BUNDLE.zip", "application/zip", key=f"zip_{location}")
     with c3:
-        if st.button("부족자료 목록 확인", type="primary"):
-            st.dataframe(missing_data_summary(), width="stretch")
+        payload_path = OUTPUT_FILES["hub_payload_latest"]
+        payload_bytes = open(payload_path, "rb").read() if os.path.exists(payload_path) else json.dumps(build_hub_payload("manual_download"), ensure_ascii=False, indent=2).encode("utf-8")
+        st.download_button("📤 허브 Payload 받기", payload_bytes, "hub_payload_latest.json", "application/json", key=f"payload_{location}")
+    with c4:
+        hub_logs = read_csv(OUTPUT_FILES["hub_send_logs"]).to_csv(index=False).encode("utf-8-sig")
+        st.download_button("📜 허브 전송 로그 받기", hub_logs, "hub_send_logs.csv", "text/csv", key=f"hublog_{location}")
+
+
+def render_metrics():
+    c = file_counts()
+    cols = st.columns(6)
+    cols[0].metric("일정표 source", c.get("source_livescore_fixtures",0))
+    cols[1].metric("과거자료 source", c.get("source_football_data",0))
+    cols[2].metric("예정경기 standard", c.get("standard_upcoming_fixtures",0))
+    cols[3].metric("빅데이터 form", c.get("standard_team_form",0) + c.get("standard_team_home_away",0) + c.get("standard_h2h",0))
+    cols[4].metric("모바일 카드", c.get("mobile_recommendations",0))
+    cols[5].metric("허브 URL", "ON" if get_hub_url() else "OFF")
+
+
+def render_full_run():
+    st.subheader("🚀 전체실행")
+    st.caption("일정표 → 과거자료 → 빅데이터 매칭 → 분석 → 모바일 추천 → 허브 전송/큐 저장까지 한 번에 실행합니다.")
+    render_download_bar("full_top")
+    render_metrics()
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("🚀 전체 실행하고 허브까지 보내기", type="primary"):
+            with st.spinner("전체 파이프라인 실행 중..."):
+                report = run_full_pipeline(True, True, True)
+            for line in report:
+                st.success(line) if "허브:" not in line or "오류" not in line else st.warning(line)
+            render_download_bar("full_after")
+    with c2:
+        if st.button("🧪 가상 백엔드 전체 테스트"):
+            ok, msg, details = virtual_backend_test()
+            st.success(msg) if ok else st.error(msg)
+            st.json(details)
     st.divider()
-    st.markdown("### 허브 상태")
-    st.metric("허브 URL", "ON" if get_hub_url() else "OFF")
-    st.info("허브 URL이 OFF여도 dry-run payload 검사는 가능합니다. 실제 구글시트 쓰기만 OFF입니다.")
-    if st.button("허브 실제 전송 테스트"):
-        payload = {"diagnosis": diagnose_current_data().to_dict(orient="records"), "missing": missing_data_summary().to_dict(orient="records")}
-        ok, msg = send_hub("backend_diagnosis", payload)
-        log_hub_result("backend_diagnosis", ok, msg, len(payload["diagnosis"]))
-        if ok:
-            st.success(msg)
-        else:
-            st.warning(msg)
-    with st.expander("최근 진단 리포트", expanded=False):
-        show_table("backend_diagnosis_report.csv", "backend_diagnosis_report", 100)
+    render_recent_outputs()
 
 
-def main() -> None:
-    st.set_page_config(page_title="마루 스포츠 분석가", page_icon="⚽", layout="wide", initial_sidebar_state="collapsed")
-    ensure_data_dir(); header(); metric_board(); st.divider()
-    tabs = st.tabs(["전체실행", "PC 모니터링", "일정표", "승부식", "수집원 관리", "자료 입력", "표준화/분석", "모바일 추천", "허브 전송", "백엔드 진단"])
-    with tabs[0]: tab_run_all()
-    with tabs[1]: tab_pc_monitor()
-    with tabs[2]: tab_fixtures()
-    with tabs[3]: tab_market_photo()
-    with tabs[4]: tab_sources()
-    with tabs[5]: tab_manual_input()
-    with tabs[6]: tab_standard_analysis()
-    with tabs[7]: tab_mobile()
-    with tabs[8]: tab_hub()
-    with tabs[9]: tab_backend_diagnosis()
-    st.divider(); st.caption(f"현재 시간: {now_kst()} · 라이브스코어는 일정표 기준만 · 자동구매/자동결제 없음")
+def render_recent_outputs():
+    t1, t2, t3, t4 = st.tabs(["모바일 추천", "분석 점수", "허브 로그", "부족자료"])
+    with t1:
+        df = read_csv(OUTPUT_FILES["mobile_recommendations"])
+        st.dataframe(df.tail(100), width="stretch") if not df.empty else st.info("모바일 추천 없음")
+    with t2:
+        df = read_csv(OUTPUT_FILES["analysis_scores"])
+        st.dataframe(df.tail(100), width="stretch") if not df.empty else st.info("분석 점수 없음")
+    with t3:
+        df = read_csv(OUTPUT_FILES["hub_send_logs"])
+        st.dataframe(df.tail(100), width="stretch") if not df.empty else st.info("허브 로그 없음")
+    with t4:
+        st.json(build_diagnosis())
+
+
+def render_fixture_tab():
+    st.subheader("📅 일정표")
+    st.info("일정표는 자동수집이 기본입니다. 수동 입력은 빠진 경기 보완용입니다.")
+    if st.button("📅 일정표 자동수집 실행", type="primary"):
+        fx, logs = fetch_thesportsdb_fixtures()
+        n, total = append_csv(SOURCE_FILES["source_livescore_fixtures"], fx, ["match_id"])
+        append_csv(OUTPUT_FILES["run_logs"], logs, subset=None)
+        st.success(f"일정표 저장: 신규 {n}건 · 전체 {total}건")
+        st.dataframe(logs, width="stretch")
+    with st.expander("CSV/표 붙여넣기로 일정표 보완", expanded=False):
+        sample = "date,kickoff_kst,sport,league,home_team,away_team,status,source,match_id\n2026-07-10,20:00,축구,K League,Ulsan,Jeonbuk,SCHEDULED,manual,manual_001\n"
+        text = st.text_area("일정표 CSV", value=sample, height=120)
+        if st.button("일정표 보완 저장"):
+            df = normalize_columns(pd.read_csv(StringIO(text)))
+            n,total = append_csv(SOURCE_FILES["source_livescore_fixtures"], df, ["match_id"])
+            st.success(f"저장: 신규 {n}, 전체 {total}")
+    df = read_csv(SOURCE_FILES["source_livescore_fixtures"])
+    st.dataframe(df.tail(100), width="stretch") if not df.empty else st.info("일정표 source 없음")
+
+
+def render_data_input_tab():
+    st.subheader("🧾 자료 입력")
+    st.caption("감독 취임일, 영입/스카우트, 주전 부상, 결장, 라인업, 뉴스는 manual 자료로 보완합니다.")
+    sample = "team,coach,coach_start_date,injuries,missing_players,lineup,transfers,scouting_note,news,note\nArsenal,Mikel Arteta,2019-12-20,,,주전 확인 필요,영입 확인 필요,,뉴스 확인 필요,\nChelsea,,,주전 수비수 체크,1명 확인 필요,,이적생 출전 여부,,감독 인터뷰 확인,\n"
+    text = st.text_area("manual CSV", value=sample, height=160)
+    if st.button("manual 현재자료 저장", type="primary"):
+        df = normalize_columns(pd.read_csv(StringIO(text)))
+        n,total = append_csv(SOURCE_FILES["source_manual"], df, ["team"])
+        st.success(f"manual 저장: 신규 {n}, 전체 {total}")
+    df = read_csv(SOURCE_FILES["source_manual"])
+    st.dataframe(df.tail(100), width="stretch") if not df.empty else st.info("manual 자료 없음")
+
+
+def render_hub_tab():
+    st.subheader("📤 허브/구글시트")
+    st.caption("허브 URL이 있으면 실제 전송, 없으면 payload_latest.json과 queue.jsonl에 저장합니다.")
+    st.code('Streamlit Secrets 예시:\nGAS_WEBAPP_URL = "구글 Apps Script 웹앱 URL"')
+    render_download_bar("hub")
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("📤 현재 결과 허브 전송/큐 저장", type="primary"):
+            ok, msg = send_to_hub(build_hub_payload("manual_hub_send"))
+            st.success(msg) if ok else st.warning(msg)
+    with c2:
+        if st.button("🧪 허브 dry-run payload 생성"):
+            latest, queue = save_hub_payload(build_hub_payload("dry_run"))
+            st.success(f"payload 저장 완료: {latest}, {queue}")
+    st.dataframe(read_csv(OUTPUT_FILES["hub_send_logs"]).tail(100), width="stretch")
+
+
+def render_diagnosis_tab():
+    st.subheader("🧪 백엔드 진단")
+    render_download_bar("diag")
+    if st.button("🧪 가상 백엔드 전체 테스트", type="primary"):
+        ok, msg, details = virtual_backend_test()
+        st.success(msg) if ok else st.error(msg)
+        st.json(details)
+        write_csv(OUTPUT_FILES["backend_diagnosis"], pd.DataFrame([{**details, "time": now_text(), "status": "ok" if ok else "fail"}]))
+    st.json(build_diagnosis())
+    with st.expander("최근 실행 로그", expanded=True):
+        st.dataframe(read_csv(OUTPUT_FILES["run_logs"]).tail(200), width="stretch")
+    with st.expander("최근 오류 로그", expanded=False):
+        st.dataframe(read_csv(OUTPUT_FILES["error_logs"]).tail(200), width="stretch")
+
+
+def render_mobile_tab():
+    st.subheader("📱 모바일 추천")
+    df = read_csv(OUTPUT_FILES["mobile_recommendations"])
+    if df.empty:
+        st.warning("모바일 추천카드 없음. 전체실행을 먼저 실행하세요.")
+        return
+    for _, r in df.tail(50).iterrows():
+        st.markdown(f"""
+        <div style='border:1px solid #ddd;border-radius:14px;padding:14px;margin-bottom:10px;background:white'>
+        <div style='font-size:13px;color:#777'>{clean(r.get('league'))} · {clean(r.get('date'))} {clean(r.get('kickoff_kst'))}</div>
+        <div style='font-size:22px;font-weight:800'>{clean(r.get('match'))}</div>
+        <div style='margin:8px 0'>승부식: <b>{clean(r.get('market_type'))}</b> 기준점: <b>{clean(r.get('line_value'))}</b></div>
+        <div>추천: <b>{clean(r.get('pick'))}</b> · 신뢰도 <b>{clean(r.get('confidence'))}%</b> · 위험도 <b>{clean(r.get('risk'))}</b> · 자료충분도 <b>{clean(r.get('data_sufficiency'))}%</b></div>
+        <div style='font-size:13px;color:#555;margin-top:8px'>근거: {clean(r.get('reasons'))}</div>
+        <div style='font-size:13px;color:#a33;margin-top:4px'>부족자료: {clean(r.get('missing_data'))}</div>
+        <div style='font-size:12px;color:#777;margin-top:6px'>자동구매/자동결제 없음</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+
+def main():
+    ensure_dirs()
+    st.set_page_config(page_title=APP_NAME, page_icon="⚽", layout="wide", initial_sidebar_state="collapsed")
+    st.title("⚽ 마루 스포츠 프로토 일정 허브")
+    st.caption("일정표 자동수집 → 과거 빅데이터 매칭 → 승부식 분석 → 모바일 추천 → 허브/구글시트 전송")
+    render_metrics()
+    tabs = st.tabs(["전체실행", "PC 모니터링", "일정표", "자료 입력", "모바일 추천", "허브 전송", "백엔드 진단"])
+    with tabs[0]: render_full_run()
+    with tabs[1]:
+        render_download_bar("monitor")
+        render_recent_outputs()
+    with tabs[2]: render_fixture_tab()
+    with tabs[3]: render_data_input_tab()
+    with tabs[4]: render_mobile_tab()
+    with tabs[5]: render_hub_tab()
+    with tabs[6]: render_diagnosis_tab()
+    st.caption(f"{APP_VERSION} · {now_text()} · 자동구매/자동결제 없음")
 
 
 if __name__ == "__main__":
