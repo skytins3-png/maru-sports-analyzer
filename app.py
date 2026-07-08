@@ -5,6 +5,10 @@ import os
 import requests
 from datetime import datetime, timezone, timedelta
 
+# 🚨 urllib3 경고 로그(InsecureRequestWarning) 차단막 추가
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 from core.config import AppConfig
 from core.cache_manager import CacheManager
 from core.sheet_hub import SheetHub
@@ -26,6 +30,19 @@ from ui.history_store_panel import render_history_store_panel
 patch_streamlit_dataframe(st)
 
 KST = timezone(timedelta(hours=9))
+
+# 📱 라이브스코어 앱 한글 팀명 -> Football-Data.co.uk 영문 데이터 매칭 사전
+TEAM_TRANSLATION = {
+    "아스널": "Arsenal", "아스날": "Arsenal",
+    "맨시티": "Man City", "맨체스터시티": "Man City", "맨체스터 시티": "Man City",
+    "리버풀": "Liverpool",
+    "첼시": "Chelsea",
+    "맨유": "Man United", "맨체스터유나이티드": "Man United",
+    "토트넘": "Tottenham",
+    "바이에른뮌헨": "Bayern Munich", "뮌헨": "Bayern Munich",
+    "레알마드리드": "Real Madrid", "레알": "Real Madrid",
+    "바르셀로나": "Barcelona", "바르샤": "Barcelona"
+}
 
 
 def clean_ui_text(text_mapped_dict):
@@ -50,13 +67,8 @@ def clean_ui_text(text_mapped_dict):
 
 
 def fetch_football_data_uk_csv():
-    """
-    🎯 [1순위 수집원] Football-Data.co.uk에서 실시간 반영 시즌 CSV를 다운로드하여 
-    마루 스포츠 분석기 표준 허브 규격으로 정밀 매핑하는 코어 디바이스
-    """
+    """[1순위 수집원] Football-Data.co.uk 실시간 CSV 다운로드 엔진"""
     standardized_rows = []
-    
-    # 대표적인 무료 수집 대상 리그 엔드포인트 세트 (E0: EPL, E1: 챔피언십, D1: 분데스리가, SP1: 라리가)
     target_leagues = {
         "E0": "잉글랜드 프리미어리그",
         "E1": "잉글랜드 챔피언십",
@@ -64,28 +76,22 @@ def fetch_football_data_uk_csv():
         "SP1": "스페인 라리가"
     }
     
-    # 26/27 시즌 데이터 타겟팅
     base_url = "https://www.football-data.co.uk/mmz4371/2627/"
     
     for league_code, league_name in target_leagues.items():
         csv_url = f"{base_url}{league_code}.csv"
         try:
-            # SSL 인증서 예외 케이스 방어 타임아웃 7초 설정
             response = requests.get(csv_url, timeout=7, verify=False)
             if response.status_code == 200:
-                # 라인별 텍스트 디코딩 예외 처리
                 csv_data = response.content.decode('utf-8', errors='ignore')
                 from io import StringIO
                 df_raw = pd.read_csv(StringIO(csv_data))
                 
-                # Football-Data.co.uk 필수 원천 데이터 칼럼 존재 유무 필터링
-                # Date(날짜), HomeTeam(홈), AwayTeam(원정), FTHG(홈득점), FTAG(원정득점)
                 required_cols = ["Date", "HomeTeam", "AwayTeam", "FTHG", "FTAG"]
                 if all(col in df_raw.columns for col in required_cols):
                     df_raw = df_raw.dropna(subset=required_cols)
                     
                     for _, row in df_raw.iterrows():
-                        # 날짜 포맷 표준화 전처리 (dd/mm/yy -> yyyy-mm-dd)
                         raw_date = str(row["Date"]).strip()
                         try:
                             if "/" in raw_date:
@@ -100,7 +106,7 @@ def fetch_football_data_uk_csv():
 
                         standardized_rows.append({
                             "date": formatted_date,
-                            "kickoff_kst": "00:00",  # 해당 소스는 킥오프 시간 미제공으로 기본값 마감
+                            "kickoff_kst": "00:00",
                             "league": league_name,
                             "home_team": str(row["HomeTeam"]).strip(),
                             "away_team": str(row["AwayTeam"]).strip(),
@@ -144,9 +150,9 @@ def main():
     history_csv_path = "cache/history_matches.csv"
 
     # ==========================================
-    # 📡 [대동맥 교체] 1순위 Football-Data.co.uk 자동 파이프라인 가동
+    # 📡 1순위 Football-Data.co.uk 자동 파이프라인 가동
     # ==========================================
-    with st.spinner("🔄 Football-Data.co.uk 실제 무료 CSV 원천자료 수집 중..."):
+    with st.spinner("🔄 Football-Data.co.uk 실시간 축구 원천자료 수집 중..."):
         df_uk_parsed = fetch_football_data_uk_csv()
         if not df_uk_parsed.empty:
             os.makedirs("cache", exist_ok=True)
@@ -181,6 +187,21 @@ def main():
         fixtures = load_sample_fixtures()
         is_sample_mode = True
         data_source_info = "샘플 데이터 모드"
+
+    # ==========================================
+    # 📱 라이브스코어 앱 연동 브릿지 필터링
+    # ==========================================
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("📱 라이브스코어 팀명 매칭")
+    search_input = st.sidebar.text_input("앱 화면의 팀명을 입력하세요 (예: 아스널)", key="livescore_team_search").strip()
+    
+    if search_input:
+        english_team_name = TEAM_TRANSLATION.get(search_input, search_input).lower()
+        fixtures = [
+            f for f in fixtures 
+            if english_team_name in str(f.get("home_team", "")).lower() or english_team_name in str(f.get("away_team", "")).lower()
+        ]
+        data_source_info += f" 🔍 [라이브스코어 앱 '{search_input}' 필터링 작동 중 - {len(fixtures)}건 매칭]"
 
     recommendations = []
     snapshots = []
