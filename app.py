@@ -8,10 +8,11 @@ import requests
 import streamlit as st
 
 # ==========================================================
-# MARU SPORTS ANALYZER - PROTO FIXTURE HUB V2 COMPLETE
+# MARU SPORTS ANALYZER - PROTO FIXTURE HUB V3 ACTIONS
 # ----------------------------------------------------------
 # 사진 1: 라이브스코어/토토 일정표 = 경기 목록 기준만
 # 사진 2: 프로토 승부식 = 승무패/핸디/언오버/전반/더블찬스/SUM/승패/한경기조합/기타
+# 9. PC 모니터링과 전체실행에 실제 실행 버튼을 둔다.
 # 원칙:
 # 1. 특정 사이트 하나에 의존하지 않는다.
 # 2. 라이브스코어는 일정표 기준만 사용한다.
@@ -658,6 +659,85 @@ def log_hub_result(payload_type: str, ok: bool, message: str, rows: int) -> None
     row = pd.DataFrame([{"time": now_kst(), "payload_type": payload_type, "ok": "Y" if ok else "N", "message": message, "rows": rows}])
     merge_csv(OUTPUT_FILES["hub_send_logs"], row, ["time", "payload_type", "message"])
 
+
+def quick_collect_football_data(default_seasons=None, default_leagues=None) -> Tuple[int, int, pd.DataFrame]:
+    """버튼 실행용: football-data 과거자료를 자동 탐색해 source_football_data.csv에 저장."""
+    seasons = default_seasons or auto_season_codes()[:4]
+    leagues = default_leagues or ["E0", "E1", "D1", "SP1", "I1", "F1"]
+    df_new, logs = fetch_football_data(seasons, leagues)
+    if not logs.empty:
+        merge_csv(OUTPUT_FILES["run_logs"], logs, ["time", "source", "season", "league_code", "url"])
+    if df_new.empty:
+        return 0, file_count(SOURCE_FILES["football_data"]), logs
+    added, total = merge_csv(SOURCE_FILES["football_data"], df_new, ["match_id"])
+    return added, total, logs
+
+
+def quick_build_pipeline() -> Dict[str, int]:
+    """버튼 실행용: source -> standard 변환 후 분석/모바일 추천까지 저장."""
+    result = run_standardize_all()
+    analysis, mobile = run_analysis()
+    result["analysis_scores"] = len(analysis)
+    result["mobile_recommendations"] = len(mobile)
+    return result
+
+
+def render_action_buttons(prefix: str = "quick") -> None:
+    """PC/전체실행 공통 실행 버튼 묶음."""
+    st.markdown("### 실행 버튼")
+    st.caption("앱 시작 시 자동수집은 하지 않습니다. 아래 버튼을 눌렀을 때만 실행합니다.")
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        if st.button("① 과거자료 자동수집", type="primary", key=f"{prefix}_collect_history"):
+            with st.spinner("football-data 시즌/리그/URL 자동 탐색 중..."):
+                added, total, logs = quick_collect_football_data()
+            if total:
+                st.success(f"과거자료 source 저장 완료: 신규/정리 {added}건 · 전체 {total}건")
+            else:
+                st.warning("저장된 과거자료가 없습니다. 탐색 로그를 확인하세요.")
+            with st.expander("수집 로그", expanded=False):
+                st.dataframe(preview_df(logs, 200), width="stretch")
+    with c2:
+        if st.button("② source → standard 변환", type="primary", key=f"{prefix}_standardize"):
+            result = run_standardize_all()
+            st.success("표준화 완료")
+            st.dataframe(pd.DataFrame([{"파일": k, "건수": v} for k, v in result.items()]), width="stretch")
+    with c3:
+        if st.button("③ 승부식 분석/모바일 생성", type="primary", key=f"{prefix}_analysis"):
+            analysis, mobile = run_analysis()
+            if analysis.empty:
+                st.warning("분석 결과가 없습니다. 일정표/승부식/현재자료를 먼저 저장하세요. 과거자료만으로 추천하지 않습니다.")
+            else:
+                st.success(f"분석 완료: analysis {len(analysis)}건 · mobile {len(mobile)}건")
+                show_mobile_cards()
+    with c4:
+        if st.button("④ 전체 실행", type="primary", key=f"{prefix}_run_all"):
+            with st.spinner("과거자료 수집 → 표준화 → 분석 → 모바일 추천 생성 중..."):
+                added, total, logs = quick_collect_football_data()
+                result = quick_build_pipeline()
+            st.success(f"전체 실행 완료 · 과거자료 source {total}건 · 모바일 {result.get('mobile_recommendations', 0)}건")
+            st.dataframe(pd.DataFrame([{"파일": k, "건수": v} for k, v in result.items()]), width="stretch")
+
+
+def tab_run_all() -> None:
+    st.subheader("전체실행")
+    st.caption("수집 → 표준화 → 승부식 분석 → 모바일 추천 생성까지 한 곳에서 실행합니다.")
+    st.info("라이브스코어는 일정표 기준만 사용합니다. 예정 경기가 없으면 모바일 추천카드는 생성하지 않습니다.")
+    render_action_buttons("run_all")
+    st.divider()
+    c1, c2, c3 = st.columns(3)
+    c1.metric("일정표 source", file_count(SOURCE_FILES["livescore_fixtures"]))
+    c2.metric("과거자료 source", file_count(SOURCE_FILES["football_data"]))
+    c3.metric("모바일 추천", file_count(OUTPUT_FILES["mobile_recommendations"]))
+    with st.expander("필수 진행 순서", expanded=True):
+        st.markdown("""
+        1. **일정표 탭**에서 오늘/예정 경기 저장  
+        2. **승부식 탭**에서 실제 승부식/기준점 저장 또는 예정경기 기준 승부식 생성  
+        3. **자료 입력 탭**에서 감독·부상·라인업·뉴스 저장  
+        4. **전체실행**에서 과거자료 수집/표준화/분석 실행  
+        5. **모바일 추천**에서 카드 확인  
+        """)
+
 # ---------------------- UI ----------------------
 
 def header() -> None:
@@ -705,6 +785,8 @@ def save_input_to_source(source_key: str, input_df: pd.DataFrame, subset_default
 def tab_pc_monitor() -> None:
     st.subheader("PC 모니터링")
     st.caption("대용량 CSV 전체 표시 금지. 건수와 최근 일부만 보여줍니다.")
+    render_action_buttons("pc")
+    st.divider()
     rows = []
     for group_name, group in [("source", SOURCE_FILES), ("standard", STANDARD_FILES), ("output", OUTPUT_FILES)]:
         for name, filename in group.items():
@@ -907,15 +989,16 @@ def tab_hub() -> None:
 def main() -> None:
     st.set_page_config(page_title="마루 스포츠 분석가", page_icon="⚽", layout="wide", initial_sidebar_state="collapsed")
     ensure_data_dir(); header(); metric_board(); st.divider()
-    tabs = st.tabs(["PC 모니터링", "일정표", "승부식", "수집원 관리", "자료 입력", "표준화/분석", "모바일 추천", "허브 전송"])
-    with tabs[0]: tab_pc_monitor()
-    with tabs[1]: tab_fixtures()
-    with tabs[2]: tab_market_photo()
-    with tabs[3]: tab_sources()
-    with tabs[4]: tab_manual_input()
-    with tabs[5]: tab_standard_analysis()
-    with tabs[6]: tab_mobile()
-    with tabs[7]: tab_hub()
+    tabs = st.tabs(["전체실행", "PC 모니터링", "일정표", "승부식", "수집원 관리", "자료 입력", "표준화/분석", "모바일 추천", "허브 전송"])
+    with tabs[0]: tab_run_all()
+    with tabs[1]: tab_pc_monitor()
+    with tabs[2]: tab_fixtures()
+    with tabs[3]: tab_market_photo()
+    with tabs[4]: tab_sources()
+    with tabs[5]: tab_manual_input()
+    with tabs[6]: tab_standard_analysis()
+    with tabs[7]: tab_mobile()
+    with tabs[8]: tab_hub()
     st.divider(); st.caption(f"현재 시간: {now_kst()} · 라이브스코어는 일정표 기준만 · 자동구매/자동결제 없음")
 
 
