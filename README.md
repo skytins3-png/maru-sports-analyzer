@@ -1,61 +1,46 @@
-# MARU SPORTS ANALYZER
+# MARU SPORTS ANALYZER v3-auto
 
-축구 경기 자료수집 · 분석 · 추천 참고용 Streamlit 앱입니다.
+핵심 구조판입니다.
 
-## 핵심 원칙
+## 원칙
+- 자료 사이트 하나 고정 금지
+- 수집원별 source CSV 분리 저장
+- 분석은 standard CSV만 사용
+- 추천카드는 standard_upcoming_fixtures.csv의 예정 경기만 사용
+- 과거 경기는 분석 근거일 뿐 추천카드 대상이 아님
+- 샘플/TEST/가짜 추천카드 금지
+- 자료 부족 시 자료부족/분석불가 표시
+- 자동구매/자동결제 없음
+- PC는 모니터링, 모바일은 추천카드 확인
+- 허브/구글시트 중심 저장
 
-- 기존 MARU KRA 구조를 제거하지 않고 확장합니다.
-- 자동구매, 자동결제, 베팅 대행 기능은 없습니다.
-- Google Apps Script + Google Sheet 허브 저장 구조를 유지합니다.
-- GitHub Actions 자동 실행 구조를 유지합니다.
-- 모바일 추천 카드 중심으로 표시합니다.
-- 느린 API는 후순위 처리하고, 실패 시 캐시를 사용합니다.
-- 추천 데이터가 비어 있으면 억지 추천을 만들지 않습니다.
+## 파일 구조
+- source_football_data.csv
+- source_sportmonks.csv
+- source_thesportsdb.csv
+- source_manual.csv
+- standard_history_matches.csv
+- standard_upcoming_fixtures.csv
+- standard_team_status.csv
+- standard_injuries.csv
+- standard_lineups.csv
+- analysis_scores.csv
+- mobile_recommendations.csv
+- hub_send_logs.csv
+- error_logs.csv
 
-## 1차 목표
+## football-data 자동 탐색
+URL을 수동 복사하지 않습니다.
+앱이 시즌 후보와 리그 후보를 만들고, 주소가 없거나 시즌이 아니면 자동으로 다음 후보로 넘어갑니다.
+football-data.co.uk는 과거 결과 수집원 중 하나일 뿐입니다.
 
-- 축구 전용
-- 승무패 분석
-- 언오버 분석
-- 경기 전 변동자료 수집
-- 경기 후 결과 저장
-- Google Sheet 허브 저장
-- Streamlit Cloud 배포
-- GitHub Actions 자동 실행
-
-## 앱 실행
-
+## 실행
 ```bash
 pip install -r requirements.txt
 streamlit run app.py
 ```
 
-## GitHub Secrets 권장값
-
-```text
-SPORTS_API_KEY
-ODDS_API_KEY
-WEATHER_API_KEY
-GAS_WEBAPP_URL
-GOOGLE_SHEET_ID
-USE_SLOW_API
-```
-
-## 안전 문구
-
-본 앱은 스포츠 경기 자료수집, 통계 분석, 추천 참고용 도구입니다.  
-자동구매, 자동결제, 베팅 대행 기능은 제공하지 않습니다.  
-최종 선택과 책임은 사용자 본인에게 있습니다.
-
-
-## 합본 업데이트: SKYTOTO 듀얼 분석 엔진 흡수
-
-업로드된 기존 토토앱에서 다음 기능만 분리해 `sports/` 모듈로 합쳤습니다.
-
-- `sports/toto_dual_engine.py`: MatchInput, AnalysisResult, hub_analyze, sheet_analyze, compare_results, review_prediction
-- `sports/backtest_engine.py`: 백테스트 래퍼
-- `sports/toto_adapter.py`: MARU SPORTS 경기/스냅샷을 듀얼 엔진 입력으로 변환
-- `ui/dual_engine_panel.py`: Streamlit 실험/백테스트 패널
-- `legacy_toto/`: 기존 토토앱 원본 보존
-
-주의: 자동구매/자동결제 기능은 추가하지 않았습니다.
+## Streamlit Secrets
+선택값:
+- SPORTMONKS_API_KEY
+- HUB_WEBAPP_URL
