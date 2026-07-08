@@ -1,15 +1,12 @@
 import streamlit as st
 from core.display_safe import patch_streamlit_dataframe
 import pandas as pd
-import os
-import requests
 from datetime import datetime, timezone, timedelta
 
 from core.config import AppConfig
 from core.cache_manager import CacheManager
 from core.sheet_hub import SheetHub
 from core.safe_logger import log_event
-from sports.football_fixtures import load_sample_fixtures
 from sports.football_pre_match import build_pre_match_snapshot
 from sports.football_analyzer import analyze_match
 from sports.football_recommender import build_recommendations
@@ -22,104 +19,159 @@ from ui.data_collection_panel import render_data_collection_panel
 from sports.toto_adapter import analyze_fixture_with_dual_engine
 from ui.history_store_panel import render_history_store_panel
 
-# 1. Streamlit 데이터프레임 패치 적용
+from sports.free_football_data_uk import (
+    fetch_football_data_uk_history,
+    merge_history_csv,
+    load_history_rows,
+    load_upcoming_rows,
+)
+
+try:
+    from ui.history_range_test_panel import render_history_range_test_panel
+except Exception as _history_test_error:
+    def render_history_range_test_panel():
+        st.error("지난 경기 수집 테스트 패널 import 실패")
+        st.code(str(_history_test_error), language="text")
+
+try:
+    from ui.sportmonks_diagnostic_panel import render_sportmonks_diagnostic_panel
+except Exception as _diag_error:
+    def render_sportmonks_diagnostic_panel():
+        st.error("Sportmonks 진단 패널 import 실패")
+        st.code(str(_diag_error), language="text")
+
+try:
+    from ui.free_source_hub_panel import render_free_source_hub_panel
+except Exception:
+    def render_free_source_hub_panel():
+        st.info("무료 경기자료 수집 허브 패널 준비 중")
+
+
 patch_streamlit_dataframe(st)
 
 KST = timezone(timedelta(hours=9))
-
-# 📱 라이브스코어 앱 한글 팀명 -> Football-Data.co.uk 영문 데이터 매칭 사전
-TEAM_TRANSLATION = {
-    "아스널": "Arsenal", "아스날": "Arsenal",
-    "맨시티": "Man City", "맨체스터시티": "Man City", "맨체스터 시티": "Man City",
-    "리버풀": "Liverpool",
-    "첼시": "Chelsea",
-    "맨유": "Man United", "맨체스터유나이티드": "Man United",
-    "토트넘": "Tottenham",
-    "바이에른뮌헨": "Bayern Munich", "뮌헨": "Bayern Munich",
-    "레알마드리드": "Real Madrid", "레알": "Real Madrid",
-    "바르셀로나": "Barcelona", "바르샤": "Barcelona"
-}
+HISTORY_CSV_PATH = "cache/history_matches.csv"
+UPCOMING_CSV_PATH = "cache/upcoming_fixtures.csv"
 
 
 def clean_ui_text(text_mapped_dict):
-    """UI 카드에서 발생하는 번역 및 오타 패치"""
+    """실제 추천카드 표시 문구 보정."""
     if not isinstance(text_mapped_dict, dict):
         return text_mapped_dict
-        
-    bad_translations = {
+
+    replacements = {
         "미음": "매우 높음",
         "어색하다": "오버/언더 기준",
         "홈승부": "홈승 후보",
-        "무승부하다": "무승부 후보"
+        "무승부하다": "무승부 후보",
+        "믿는다": "신뢰도",
+        "운동:": "근거:",
     }
-    
+
     cleaned = {}
-    for k, v in text_mapped_dict.items():
-        if isinstance(v, str):
-            for bad, good in bad_translations.items():
-                v = v.replace(bad, good)
-        cleaned[k] = v
+    for key, value in text_mapped_dict.items():
+        if isinstance(value, str):
+            for old, new in replacements.items():
+                value = value.replace(old, new)
+        cleaned[key] = value
     return cleaned
 
 
-def fetch_football_data_uk_csv():
-    """[1순위 수집원] Football-Data.co.uk 실시간 CSV 다운로드 엔진"""
-    standardized_rows = []
-    target_leagues = {
+def _is_invalid_real_row(row: dict) -> bool:
+    """실버전에서 테스트/샘플/가짜 데이터를 완전히 차단."""
+    text = " ".join(
+        str(row.get(k, ""))
+        for k in ["match_id", "match_no", "league", "home_team", "away_team", "source", "date"]
+    ).upper()
+
+    blocked_words = ["TEST", "SAMPLE", "DUMMY", "FAKE", "샘플", "테스트", "가짜"]
+    if any(word in text for word in blocked_words):
+        return True
+
+    home = str(row.get("home_team", "")).strip().upper()
+    away = str(row.get("away_team", "")).strip().upper()
+
+    # 개발용 A/B/C 팀 완전 차단
+    if home in {"A", "B", "C", "HOME", "UNKNOWN HOME"}:
+        return True
+    if away in {"A", "B", "C", "AWAY", "UNKNOWN AWAY"}:
+        return True
+
+    return False
+
+
+def _inject_fixture_defaults(fixture: dict, idx: int) -> dict:
+    fixture = dict(fixture)
+    fixture.setdefault("match_no", fixture.get("match_id", idx + 1))
+    fixture.setdefault("match_id", f"match_{idx + 1}")
+    fixture.setdefault("home_team", "")
+    fixture.setdefault("away_team", "")
+    fixture.setdefault("league", "")
+    fixture.setdefault("date", datetime.now(KST).strftime("%Y-%m-%d"))
+    fixture.setdefault("kickoff_kst", fixture.get("time", fixture.get("kickoff", "")))
+    fixture.setdefault("source", "unknown")
+    return fixture
+
+
+def render_real_csv_collection_box():
+    st.subheader("📥 무료 경기결과 실제 수집")
+    st.caption(
+        "Football-Data.co.uk 완료 경기 CSV를 가져와 과거자료 저장소에 저장합니다. "
+        "이 자료는 추천카드가 아니라 최근 흐름/홈원정/상대전적 분석 근거로 사용합니다."
+    )
+
+    league_options = {
         "E0": "잉글랜드 프리미어리그",
         "E1": "잉글랜드 챔피언십",
         "D1": "독일 분데스리가",
-        "SP1": "스페인 라리가"
+        "SP1": "스페인 라리가",
+        "I1": "이탈리아 세리에A",
+        "F1": "프랑스 리그1",
     }
-    
-    base_url = "https://www.football-data.co.uk/mmz4371/2627/"
-    
-    for league_code, league_name in target_leagues.items():
-        csv_url = f"{base_url}{league_code}.csv"
-        try:
-            response = requests.get(csv_url, timeout=7)
-            if response.status_code == 200:
-                csv_data = response.content.decode('utf-8', errors='ignore')
-                from io import StringIO
-                df_raw = pd.read_csv(StringIO(csv_data))
-                
-                required_cols = ["Date", "HomeTeam", "AwayTeam", "FTHG", "FTAG"]
-                if all(col in df_raw.columns for col in required_cols):
-                    df_raw = df_raw.dropna(subset=required_cols)
-                    
-                    for _, row in df_raw.iterrows():
-                        raw_date = str(row["Date"]).strip()
-                        try:
-                            if "/" in raw_date:
-                                parts = raw_date.split("/")
-                                if len(parts[2]) == 2:
-                                    parts[2] = f"20{parts[2]}"
-                                formatted_date = f"{parts[2]}-{parts[1]}-{parts[0]}"
-                            else:
-                                formatted_date = raw_date
-                        except Exception:
-                            formatted_date = raw_date
 
-                        standardized_rows.append({
-                            "date": formatted_date,
-                            "kickoff_kst": "00:00",
-                            "league": league_name,
-                            "home_team": str(row["HomeTeam"]).strip(),
-                            "away_team": str(row["AwayTeam"]).strip(),
-                            "home_score": int(row["FTHG"]),
-                            "away_score": int(row["FTAG"]),
-                            "status": "FT",
-                            "source": f"football_data_uk_{league_code}",
-                            "match_id": f"uk_{league_code}_{formatted_date}_{str(row['HomeTeam'])[:3]}"
-                        })
-        except requests.exceptions.SSLError as ssl_err:
-            log_event("football_data_uk_ssl_error", {"league": league_code, "error": str(ssl_err)})
-            continue
-        except Exception as err:
-            log_event("football_data_uk_fetch_error", {"league": league_code, "error": str(err)})
-            continue
-            
-    return pd.DataFrame(standardized_rows)
+    col1, col2 = st.columns([1, 2])
+
+    with col1:
+        season_code = st.text_input(
+            "시즌 코드",
+            value="2627",
+            key="maru_real_fd_uk_season_code",
+            help="예: 2526, 2627",
+        )
+
+    with col2:
+        selected_codes = st.multiselect(
+            "수집 리그",
+            options=list(league_options.keys()),
+            default=["E0", "D1", "SP1"],
+            format_func=lambda code: f"{code} · {league_options[code]}",
+            key="maru_real_fd_uk_league_codes",
+        )
+
+    if st.button("실제 CSV 수집 후 과거자료 저장", key="maru_real_fd_uk_collect_btn"):
+        with st.spinner("Football-Data.co.uk 실제 완료 경기 수집 중..."):
+            df_new, logs = fetch_football_data_uk_history(
+                season_code=season_code,
+                league_codes=selected_codes,
+            )
+
+        with st.expander("수집 로그 보기", expanded=False):
+            st.dataframe(pd.DataFrame(logs), width="stretch")
+
+        if df_new.empty:
+            st.warning("수집된 완료 경기 데이터가 없습니다. 시즌 코드, 리그 코드, 경기 진행 여부를 확인하세요.")
+        else:
+            # 실버전 필터: 테스트/샘플 행 저장 차단
+            df_new = df_new[
+                ~df_new.apply(lambda r: _is_invalid_real_row(r.to_dict()), axis=1)
+            ]
+
+            if df_new.empty:
+                st.warning("수집 결과가 실데이터 필터를 통과하지 못했습니다.")
+            else:
+                added_count, total_count = merge_history_csv(HISTORY_CSV_PATH, df_new)
+                st.success(f"과거자료 저장 완료: 신규/정리 {added_count}건 · 전체 {total_count}건")
+                st.dataframe(df_new.head(30), width="stretch")
 
 
 def main():
@@ -145,99 +197,41 @@ def main():
 
     now_kst = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S KST")
 
-    fixtures = []
-    data_source_info = "로컬 저장소"
-    history_csv_path = "cache/history_matches.csv"
+    # ==========================================================
+    # 실버전 핵심 원칙
+    # history_matches.csv = 과거 완료 경기 저장소
+    # upcoming_fixtures.csv = 예정 경기 저장소
+    # 과거자료/샘플/테스트 데이터로 추천카드 생성 금지
+    # 앱 시작 시 외부 사이트 자동호출 금지
+    # ==========================================================
+    history_rows = [
+        r for r in load_history_rows(HISTORY_CSV_PATH)
+        if not _is_invalid_real_row(r)
+    ]
 
-    # ==========================================
-    # 📡 1순위 Football-Data.co.uk 자동 파이프라인 가동
-    # ==========================================
-    with st.spinner("🔄 Football-Data.co.uk 실시간 축구 원천자료 수집 중..."):
-        df_uk_parsed = fetch_football_data_uk_csv()
-        if not df_uk_parsed.empty:
-            os.makedirs("cache", exist_ok=True)
-            if os.path.exists(history_csv_path):
-                try:
-                    df_existing = pd.read_csv(history_csv_path)
-                    df_total = pd.concat([df_existing, df_uk_parsed]).drop_duplicates(subset=["date", "home_team", "away_team"])
-                except Exception:
-                    df_total = df_uk_parsed
-            else:
-                df_total = df_uk_parsed
-            
-            df_total.to_csv(history_csv_path, index=False)
-            fixtures = df_total.to_dict(orient="records")
-            data_source_info = f"Football-Data.co.uk 실시간 CSV 연동 ({len(fixtures)}건 데이터 로드 완료)"
-
-    # 비상용 로컬 캐시 백킹
-    if not fixtures and os.path.exists(history_csv_path):
-        try:
-            df_local = pd.read_csv(history_csv_path)
-            if not df_local.empty:
-                if '값' in df_local.columns:
-                    df_local['값'] = df_local['값'].astype(str)
-                fixtures = df_local.to_dict(orient="records")
-                data_source_info = f"로컬 캐시 허브 파일 ({len(fixtures)}건)"
-        except Exception:
-            pass
-
-    # 최종 예외 모드
-    is_sample_mode = False
-    if not fixtures:
-        fixtures = load_sample_fixtures()
-        is_sample_mode = True
-        data_source_info = "샘플 데이터 모드"
-
-    # ==========================================
-    # 📱 라이브스코어 앱 연동 브릿지 필터링
-    # ==========================================
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("📱 라이브스코어 팀명 매칭")
-    search_input = st.sidebar.text_input("앱 화면의 팀명을 입력하세요 (예: 아스널)", key="livescore_team_search").strip()
-    
-    if search_input:
-        english_team_name = TEAM_TRANSLATION.get(search_input, search_input).lower()
-        fixtures = [
-            f for f in fixtures 
-            if english_team_name in str(f.get("home_team", "")).lower() or english_team_name in str(f.get("away_team", "")).lower()
-        ]
-        data_source_info += f" 🔍 [라이브스코어 앱 '{search_input}' 필터링 작동 중 - {len(fixtures)}건 매칭]"
+    fixtures = [
+        _inject_fixture_defaults(r, idx)
+        for idx, r in enumerate(load_upcoming_rows(UPCOMING_CSV_PATH))
+        if not _is_invalid_real_row(r)
+    ]
 
     recommendations = []
     snapshots = []
     analyses = []
 
-    # ==========================================
-    # 🛡️ 데이터 분석 및 결측치 가드월
-    # ==========================================
     for idx, fixture in enumerate(fixtures):
-        if "match_no" not in fixture:
-            fixture["match_no"] = fixture.get("match_id", idx + 1)
-        if "match_id" not in fixture:
-            fixture["match_id"] = f"match_{idx + 1}"
-        if "home_team" not in fixture:
-            fixture["home_team"] = "Home"
-        if "away_team" not in fixture:
-            fixture["away_team"] = "Away"
-        if "league" not in fixture:
-            fixture["league"] = "Unknown League"
-        if "date" not in fixture:
-            fixture["date"] = datetime.now(KST).strftime("%Y-%m-%d")
-        if "kickoff_kst" not in fixture:
-            fixture["kickoff_kst"] = fixture.get("time", fixture.get("kickoff", "00:00"))
-
         snapshot = build_pre_match_snapshot(fixture, cache=cache, use_slow_api=use_slow_api)
         snapshots.append(snapshot)
-        
+
         analysis = analyze_match(fixture, snapshot)
         analyses.append(analysis)
-        
+
         rec = build_recommendations(fixture, snapshot, analysis)
         if rec:
-            rec = clean_ui_text(rec)
-            recommendations.append(rec)
+            recommendations.append(clean_ui_text(rec))
 
-    # 마스터 상태 메인 대시보드
+    data_source_info = f"실제 과거자료 {len(history_rows)}건 / 실제 예정경기 {len(fixtures)}건"
+
     render_system_status(
         now_kst=now_kst,
         fixture_count=len(fixtures),
@@ -247,58 +241,65 @@ def main():
     )
     st.caption(f"📊 **현재 활성화된 데이터 수집원:** {data_source_info}")
 
-    # ==========================================
-    # 🗄️ 과거자료 수집센터 및 핵심 분석 카드
-    # ==========================================
     st.divider()
-    render_history_store_panel(fixtures)
+    render_real_csv_collection_box()
 
-    if recommendations and not is_sample_mode:
+    st.divider()
+    render_history_range_test_panel()
+
+    st.divider()
+    render_free_source_hub_panel()
+
+    st.divider()
+    render_history_store_panel(history_rows)
+
+    st.divider()
+    render_sportmonks_diagnostic_panel()
+
+    if recommendations:
         render_mobile_cards(recommendations)
     else:
         render_empty_guard()
+        st.info(
+            "실제 예정 경기 자료가 없어 추천카드를 만들지 않았습니다. "
+            "과거 완료 경기는 최근 5경기/10경기/홈원정/득실/상대전적 분석 근거로만 사용합니다."
+        )
 
-    # 원자료 모니터링 섹션
     st.divider()
-    with st.expander("경기 원자료 보기"):
-        df_fix = pd.DataFrame(fixtures)
-        if '값' in df_fix.columns:
-            df_fix['값'] = df_fix['값'].astype(str)
-        st.dataframe(df_fix, width="stretch")
+    with st.expander("과거 경기 원자료 보기"):
+        st.dataframe(pd.DataFrame(history_rows), width="stretch")
+
+    with st.expander("예정 경기 원자료 보기"):
+        st.dataframe(pd.DataFrame(fixtures), width="stretch")
 
     with st.expander("추천 결과 원자료 보기"):
-        df_rec = pd.DataFrame(recommendations)
-        if '값' in df_rec.columns:
-            df_rec['값'] = df_rec['값'].astype(str)
-        st.dataframe(df_rec, width="stretch")
+        st.dataframe(pd.DataFrame(recommendations), width="stretch")
 
-    # 듀얼 매칭 비교 엔진
     with st.expander("기존 SKYTOTO 듀얼 엔진 자동 비교", expanded=False):
-        dual_rows = []
-        for idx_d, fixture in enumerate(fixtures):
-            if "match_id" not in fixture:
-                fixture["match_id"] = f"match_dual_{idx_d + 1}"
-            
-            current_snapshot = snapshots[idx_d] if idx_d < len(snapshots) else {}
-            dual = analyze_fixture_with_dual_engine(fixture, current_snapshot)
-            
-            dual_rows.append({
-                "match_id": fixture.get("match_id", "N/A"),
-                "title": f'{fixture.get("home_team", "Home")} vs {fixture.get("away_team", "Away")}',
-                "hub_pick": dual["hub"]["predicted_label"],
-                "sheet_pick": dual["sheet"]["predicted_label"],
-                "final": dual["compare"]["final"],
-                "avg_confidence": dual["compare"].get("avg_conf", 0),
-                "risk": dual["compare"].get("max_risk", 0),
-            })
-        df_dual = pd.DataFrame(dual_rows)
-        if '값' in df_dual.columns:
-            df_dual['값'] = df_dual['값'].astype(str)
-        st.dataframe(df_dual, width="stretch")
+        if not fixtures:
+            st.info("실제 예정 경기 자료가 없어 듀얼 엔진 비교를 실행하지 않았습니다.")
+        else:
+            dual_rows = []
+            for idx_d, fixture in enumerate(fixtures):
+                fixture = _inject_fixture_defaults(fixture, idx_d)
+                current_snapshot = snapshots[idx_d] if idx_d < len(snapshots) else {}
+                dual = analyze_fixture_with_dual_engine(fixture, current_snapshot)
+
+                dual_rows.append({
+                    "match_id": fixture.get("match_id", "N/A"),
+                    "title": f'{fixture.get("home_team", "")} vs {fixture.get("away_team", "")}',
+                    "hub_pick": dual["hub"]["predicted_label"],
+                    "sheet_pick": dual["sheet"]["predicted_label"],
+                    "final": dual["compare"]["final"],
+                    "avg_confidence": dual["compare"].get("avg_conf", 0),
+                    "risk": dual["compare"].get("max_risk", 0),
+                })
+
+            st.dataframe(pd.DataFrame(dual_rows), width="stretch")
 
     render_dual_engine_panel()
 
-    if save_to_sheet and recommendations and not is_sample_mode:
+    if save_to_sheet and recommendations:
         payload = {
             "type": "mobile_recommend",
             "app": "MARU SPORTS ANALYZER",
@@ -311,8 +312,15 @@ def main():
         else:
             st.warning(f"Google Sheet 허브 저장 실패 또는 미설정: {msg}")
 
-    log_event("app_run", {"fixtures": len(fixtures), "recommendations": len(recommendations)})
-    
+    log_event(
+        "app_run",
+        {
+            "history_rows": len(history_rows),
+            "fixtures": len(fixtures),
+            "recommendations": len(recommendations),
+        },
+    )
+
     st.divider()
     render_data_collection_panel(config, fixtures, snapshots, analyses, recommendations)
 
