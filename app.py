@@ -47,7 +47,6 @@ def clean_ui_text(text_mapped_dict):
     if not isinstance(text_mapped_dict, dict):
         return text_mapped_dict
         
-    # 터진 텍스트 직접 치환 보정 벨트
     bad_translations = {
         "미음": "매우 높음",
         "어색하다": "오버/언더 기준",
@@ -65,10 +64,7 @@ def clean_ui_text(text_mapped_dict):
 
 
 def parse_sportmonks_raw_response(sportmonks_payload):
-    """
-    Sportmonks API 응답 원본 패킷에서 
-    participants 뎁스를 깨부수고 표준 규격 데이터프레임으로 추출하는 커넥터
-    """
+    """Sportmonks API 응답 원본 패킷 파서"""
     standardized_rows = []
     if not sportmonks_payload or "data" not in sportmonks_payload:
         return pd.DataFrame()
@@ -77,7 +73,6 @@ def parse_sportmonks_raw_response(sportmonks_payload):
         home_team = "Unknown Home"
         away_team = "Unknown Away"
         
-        # participants 배열 내부 루프를 돌며 홈/원정 스위칭 분리
         for part in item.get("participants", []):
             location = part.get("meta", {}).get("location", "")
             if location == "home":
@@ -118,7 +113,6 @@ def main():
 
     render_header()
 
-    # 사이드바 설정 영역
     with st.sidebar:
         st.subheader("MARU 설정")
         app_mode = st.selectbox("앱 모드", ["축구 전용", "확장 준비"], index=0, key="maru_app_mode_select")
@@ -128,14 +122,10 @@ def main():
 
     now_kst = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S KST")
 
-    # ==========================================
-    # 🔄 무료 경기자료 데이터 수집 허브 파이프라인
-    # ==========================================
     fixtures = []
     data_source_info = "로컬 저장소"
     history_csv_path = "cache/history_matches.csv"
 
-    # [백엔드 자동 처리 연동] 만약 진단 패널 등 세션에 Sportmonks 원본 로우 데이터 수집 흔적이 있다면 병합 자동 시도
     if st.session_state.get("sportmonks_raw_debug_payload"):
         try:
             df_parsed = parse_sportmonks_raw_response(st.session_state["sportmonks_raw_debug_payload"])
@@ -151,7 +141,6 @@ def main():
         except Exception as _sync_err:
             st.sidebar.warning(f"Sportmonks 실데이터 허브 변환 스킵: {_sync_err}")
 
-    # 1순위: 캐싱된 수집 허브 경기 데이터 파일 로드
     if os.path.exists(history_csv_path):
         try:
             df_local = pd.read_csv(history_csv_path)
@@ -163,20 +152,19 @@ def main():
         except Exception as e:
             st.sidebar.error(f"로컬 수집 허브 파일 로드 실패: {e}")
 
-    # 2순위: 만약 파일 시스템 내 데이터가 0건이라면 가이드 샘플 전환
     is_sample_mode = False
     if not fixtures:
         fixtures = load_sample_fixtures()
         is_sample_mode = True
         data_source_info = "샘플 데이터 (실제 수집 데이터 없음)"
-        st.info("💡 현재 실제 수집된 경기 데이터(`cache/history_matches.csv`)가 없어 샘플 모드로 작동 중입니다. 수집센터에서 자료를 채워주세요.")
+        st.info("💡 현재 실제 수집된 경기 데이터가 없어 샘플 모드로 작동 중입니다.")
 
     recommendations = []
     snapshots = []
     analyses = []
 
     # ==========================================
-    # 🛡️ 데이터 분석 및 KeyError 가드월 가동
+    # 🛡️ 1차 루프: 데이터 가공 및 단 한번의 스냅샷 빌드 (속도 최적화)
     # ==========================================
     for idx, fixture in enumerate(fixtures):
         if "match_no" not in fixture:
@@ -194,7 +182,7 @@ def main():
         if "kickoff_kst" not in fixture:
             fixture["kickoff_kst"] = fixture.get("time", fixture.get("kickoff", "00:00"))
 
-        # 스냅샷 및 마루 통계 코어 연산 가동
+        # 무거운 API/캐시 연산은 여기서 딱 한번만 수행하여 snapshots 배열에 저장합니다.
         snapshot = build_pre_match_snapshot(fixture, cache=cache, use_slow_api=use_slow_api)
         snapshots.append(snapshot)
         
@@ -203,11 +191,9 @@ def main():
         
         rec = build_recommendations(fixture, snapshot, analysis)
         if rec:
-            # 💡 [UI 패치 가동] 출력 직전에 꼬인 한글 텍스트 정밀 클리닝
             rec = clean_ui_text(rec)
             recommendations.append(rec)
 
-    # 대시보드 마스터 상태창 출력
     render_system_status(
         now_kst=now_kst,
         fixture_count=len(fixtures),
@@ -217,7 +203,6 @@ def main():
     )
     st.caption(f"📊 **현재 활성화된 데이터 수집원:** {data_source_info}")
 
-    # UI 컴포넌트 순차 배치
     st.divider()
     render_history_range_test_panel()
 
@@ -227,7 +212,6 @@ def main():
     st.divider()
     render_sportmonks_diagnostic_panel()
 
-    # 결과 카드 출력 가드 시스템
     if recommendations and not is_sample_mode:
         render_mobile_cards(recommendations)
     elif is_sample_mode:
@@ -239,7 +223,7 @@ def main():
         render_empty_guard()
 
     # ==========================================
-    # 📊 데이터프레임 원자료 출력 파트 (Arrow TypeError 완벽 케어)
+    # 📊 데이터프레임 원자료 출력 파트
     # ==========================================
     st.divider()
     with st.expander("경기 원자료 보기"):
@@ -254,14 +238,19 @@ def main():
             df_rec['값'] = df_rec['값'].astype(str)
         st.dataframe(df_rec, width="stretch")
 
+    # ==========================================
+    # ⚡ [핵심 수정] 중복 build_pre_match_snapshot 제거 연산 최적화
+    # ==========================================
     with st.expander("기존 SKYTOTO 듀얼 엔진 자동 비교", expanded=False):
         dual_rows = []
         for idx_d, fixture in enumerate(fixtures):
             if "match_id" not in fixture:
                 fixture["match_id"] = f"match_dual_{idx_d + 1}"
             
-            snapshot = build_pre_match_snapshot(fixture, cache=cache, use_slow_api=use_slow_api)
-            dual = analyze_fixture_with_dual_engine(fixture, snapshot)
+            # 🔥 핵심 패치: 이전에 계산해 둔 snapshots[idx_d]를 그대로 가져다 씁니다. (재연산 생략)
+            current_snapshot = snapshots[idx_d] if idx_d < len(snapshots) else {}
+            dual = analyze_fixture_with_dual_engine(fixture, current_snapshot)
+            
             dual_rows.append({
                 "match_id": fixture.get("match_id", "N/A"),
                 "title": f'{fixture.get("home_team", "Home")} vs {fixture.get("away_team", "Away")}',
@@ -278,7 +267,6 @@ def main():
 
     render_dual_engine_panel()
 
-    # 구글 시트 업스케일링 전송
     if save_to_sheet and recommendations and not is_sample_mode:
         payload = {
             "type": "mobile_recommend",
