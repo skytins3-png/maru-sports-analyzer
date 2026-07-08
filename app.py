@@ -24,6 +24,9 @@ CACHE_DIR = "cache"
 HISTORY_PATH = f"{CACHE_DIR}/history_matches.csv"
 UPCOMING_PATH = f"{CACHE_DIR}/upcoming_fixtures.csv"
 TEAM_STATUS_PATH = f"{CACHE_DIR}/team_status.csv"
+SOURCE_LOGS_PATH = f"{CACHE_DIR}/source_logs.csv"
+ANALYSIS_PATH = f"{CACHE_DIR}/analysis_scores.csv"
+MOBILE_RECOMMENDATIONS_PATH = f"{CACHE_DIR}/mobile_recommendations.csv"
 
 LEAGUE_NAMES = {
     "E0": "잉글랜드 프리미어리그",
@@ -33,6 +36,11 @@ LEAGUE_NAMES = {
     "I1": "이탈리아 세리에A",
     "F1": "프랑스 리그1",
 }
+
+
+FOOTBALL_DATA_SITE = "https://www.football-data.co.uk/"
+FOOTBALL_DATA_DOWNLOAD = "https://www.football-data.co.uk/downloadm.php"
+FOOTBALL_DATA_CSV_ROOT = "https://www.football-data.co.uk/mmz4281/{season}/{league}.csv"
 
 HISTORY_REQUIRED = ["date", "league", "home_team", "away_team", "home_score", "away_score"]
 UPCOMING_REQUIRED = ["date", "kickoff_kst", "league", "home_team", "away_team"]
@@ -272,18 +280,51 @@ def validate_team_status_df(df: pd.DataFrame):
     return True, clean_df, f"팀 현재상태 {len(clean_df)}건 정규화 성공"
 
 
+def auto_season_codes():
+    """
+    Football-Data.co.uk 시즌 코드는 2025/26 = 2526 형태.
+    현재 날짜 기준으로 새 시즌/직전 시즌/전전 시즌을 자동 후보로 만든다.
+    """
+    now = datetime.now(KST)
+    year = now.year
+
+    if now.month >= 7:
+        start_year = year
+    else:
+        start_year = year - 1
+
+    candidates = []
+    for sy in [start_year, start_year - 1, start_year - 2]:
+        code = f"{str(sy)[-2:]}{str(sy + 1)[-2:]}"
+        if code not in candidates:
+            candidates.append(code)
+
+    for fallback in ["2526", "2425", "2324"]:
+        if fallback not in candidates:
+            candidates.append(fallback)
+
+    return candidates
+
+
 def season_candidates(season_code: str):
-    clean = clean_text(season_code).replace("/", "")
+    clean = clean_text(season_code).replace("/", "").upper()
+
+    if clean in {"", "AUTO", "자동"}:
+        return auto_season_codes()
+
     candidates = []
     if clean:
         candidates.append(clean)
+
     if len(clean) == 4 and clean.isdigit():
         reversed_pair = clean[2:] + clean[:2]
         if reversed_pair not in candidates:
             candidates.append(reversed_pair)
-    for fallback in ["2526", "2425"]:
+
+    for fallback in auto_season_codes():
         if fallback not in candidates:
             candidates.append(fallback)
+
     return candidates
 
 
@@ -298,13 +339,14 @@ def fetch_football_data_uk(season_code: str, league_codes, timeout=10):
     rows = []
     logs = []
 
-    clean_input = clean_text(season_code).replace("/", "")
-    if not clean_input.isdigit() or len(clean_input) != 4:
-        return pd.DataFrame(), [{
-            "source": "football-data.co.uk",
-            "ok": False,
-            "message": "시즌 코드는 2526처럼 4자리 숫자여야 합니다.",
-        }]
+    clean_input = clean_text(season_code).replace("/", "").upper()
+    if clean_input not in {"", "AUTO", "자동"}:
+        if not clean_input.isdigit() or len(clean_input) != 4:
+            return pd.DataFrame(), [{
+                "source": "football-data.co.uk",
+                "ok": False,
+                "message": "시즌 코드는 AUTO 또는 2526처럼 4자리 숫자여야 합니다.",
+            }]
 
     for season in season_candidates(clean_input):
         for code in league_codes:
@@ -576,6 +618,98 @@ def render_card(result: dict):
     )
 
 
+
+def get_hub_url():
+    """
+    Streamlit secrets에 아래 이름 중 하나가 있으면 Google Sheet 허브로 전송.
+    없으면 로컬 CSV 저장만 수행.
+    """
+    for key in ["GAS_WEBAPP_URL", "gas_webapp_url", "GOOGLE_SHEET_HUB_URL", "sheet_hub_url"]:
+        try:
+            value = st.secrets.get(key, "")
+            if value:
+                return str(value)
+        except Exception:
+            pass
+    return ""
+
+
+def push_to_google_sheet_hub(payload: dict):
+    url = get_hub_url()
+    if not url:
+        return False, "Google Sheet 허브 URL 미설정"
+
+    try:
+        response = requests.post(url, json=payload, timeout=15)
+        if 200 <= response.status_code < 300:
+            return True, f"허브 전송 성공 HTTP {response.status_code}"
+        return False, f"허브 전송 실패 HTTP {response.status_code}: {response.text[:200]}"
+    except Exception as exc:
+        return False, f"허브 전송 오류: {exc}"
+
+
+def save_source_logs(logs):
+    df_logs = pd.DataFrame(logs)
+    if df_logs.empty:
+        return 0, len(read_csv_safe(SOURCE_LOGS_PATH))
+    df_logs["collected_at"] = now_kst_text()
+    added, total = merge_csv(SOURCE_LOGS_PATH, df_logs, ["source", "season", "league_code", "url", "collected_at"])
+    return added, total
+
+
+def build_analysis_outputs(history_df: pd.DataFrame, upcoming_df: pd.DataFrame, team_status_df: pd.DataFrame):
+    analysis_rows = []
+    mobile_rows = []
+
+    if history_df.empty or upcoming_df.empty:
+        return pd.DataFrame(), pd.DataFrame()
+
+    for _, fixture in upcoming_df.iterrows():
+        result = analyze_fixture(fixture.to_dict(), history_df, team_status_df)
+        analysis_row = dict(result)
+        analysis_row["created_at"] = now_kst_text()
+        analysis_rows.append(analysis_row)
+
+        mobile_rows.append({
+            "created_at": now_kst_text(),
+            "match": result.get("match", ""),
+            "league": result.get("league", ""),
+            "date_time": result.get("date_time", ""),
+            "pick": result.get("pick", ""),
+            "confidence": result.get("confidence", 0),
+            "risk": result.get("risk", ""),
+            "data_points": result.get("data_points", 0),
+            "summary": result.get("message", ""),
+            "auto_buy": "NO",
+            "auto_payment": "NO",
+        })
+
+    return pd.DataFrame(analysis_rows), pd.DataFrame(mobile_rows)
+
+
+def save_analysis_and_mobile(history_df: pd.DataFrame, upcoming_df: pd.DataFrame, team_status_df: pd.DataFrame):
+    analysis_df, mobile_df = build_analysis_outputs(history_df, upcoming_df, team_status_df)
+
+    if analysis_df.empty or mobile_df.empty:
+        return False, "분석 저장 실패: 과거자료 또는 예정경기가 부족합니다.", analysis_df, mobile_df
+
+    write_csv_safe(ANALYSIS_PATH, analysis_df)
+    write_csv_safe(MOBILE_RECOMMENDATIONS_PATH, mobile_df)
+
+    payload = {
+        "type": "maru_sports_pipeline",
+        "app": "MARU SPORTS ANALYZER",
+        "created_at": now_kst_text(),
+        "analysis_scores": analysis_df.to_dict(orient="records"),
+        "mobile_recommendations": mobile_df.to_dict(orient="records"),
+    }
+    ok, msg = push_to_google_sheet_hub(payload)
+    if ok:
+        return True, f"분석/모바일 추천 저장 완료 · {msg}", analysis_df, mobile_df
+    return True, f"분석/모바일 추천 로컬 저장 완료 · {msg}", analysis_df, mobile_df
+
+
+
 def render_header():
     st.markdown(
         """
@@ -583,6 +717,10 @@ def render_header():
             <div style="font-size:34px;font-weight:900;">⚽ MARU SPORTS ANALYZER</div>
             <div style="font-size:15px;color:#6b7280;margin-top:6px;">
                 실버전 · 자동구매 없음 · 자동결제 없음 · 자료 없으면 분석불가 표시
+            </div>
+            <div style="margin-top:10px;padding:12px 14px;border-radius:14px;background:#f9fafb;border:1px solid #e5e7eb;font-size:14px;line-height:1.6;">
+                <b>사용 순서:</b> ① 전체실행 또는 과거자료 자동수집 → ② 예정경기 저장 → ③ 감독·선수 저장 → ④ 분석/모바일추천 저장<br>
+                <b>자료 사이트:</b> Football-Data.co.uk · <b>사이트는 football-data.co.uk 하나만 사용 · 시즌/리그 URL은 앱이 자동 탐색
             </div>
         </div>
         """,
@@ -598,43 +736,137 @@ def render_status(history_df, upcoming_df, team_status_df, results):
     c4.metric("추천카드", len(results))
 
 
-def render_collect_tab():
-    st.subheader("📥 과거 경기결과 수집")
-    st.caption("Football-Data.co.uk 완료 경기만 가져옵니다. 앱 시작 시 자동호출하지 않고, 버튼을 눌렀을 때만 수집합니다.")
 
-    col1, col2 = st.columns([1, 2])
-    with col1:
-        season_code = st.text_input("시즌 코드", value="2526", help="예: 2025/26 시즌은 2526")
-    with col2:
-        selected = st.multiselect(
-            "리그 선택",
-            options=list(LEAGUE_NAMES.keys()),
-            default=["E0", "D1", "SP1"],
-            format_func=lambda x: f"{x} · {LEAGUE_NAMES[x]}",
-        )
+def render_pipeline_tab():
+    st.subheader("🚀 전체 파이프라인")
+    st.caption("PC 확인용입니다. 수집 → 분류저장 → 분석 → 모바일 추천 저장 → 허브 전송을 한 번에 실행합니다.")
 
-    if st.button("실제 과거자료 수집/저장", type="primary"):
-        if not selected:
-            st.warning("리그를 하나 이상 선택하세요.")
-            return
+    history_df = read_csv_safe(HISTORY_PATH)
+    upcoming_df = read_csv_safe(UPCOMING_PATH)
+    team_status_df = read_csv_safe(TEAM_STATUS_PATH)
 
-        with st.spinner("Football-Data.co.uk 수집 중..."):
-            df_new, logs = fetch_football_data_uk(season_code, selected)
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("과거자료", len(history_df))
+    c2.metric("예정경기", len(upcoming_df))
+    c3.metric("감독·선수", len(team_status_df))
+    c4.metric("허브 URL", "ON" if get_hub_url() else "OFF")
 
-        with st.expander("수집 로그", expanded=True):
-            st.dataframe(pd.DataFrame(logs), width="stretch")
+    st.info(
+        "예정경기와 감독·선수 자료가 없으면 추천은 만들지 않습니다. "
+        "없는 자료는 자료부족으로 표시하는 것이 실버전 원칙입니다."
+    )
 
-        if df_new.empty:
-            st.error("수집된 완료 경기 데이터가 없습니다. 시즌 코드/리그/HTTP 상태를 확인하세요.")
-        else:
+    if st.button("수집 → 분석 → 저장 → 허브 전송 실행", type="primary"):
+        run_logs = []
+
+        with st.spinner("1단계: football-data 과거자료 자동수집 중..."):
+            df_new, logs = fetch_football_data_uk("AUTO", ["E0", "E1", "D1", "SP1", "I1", "F1"])
+            save_source_logs(logs)
+            run_logs.extend(logs)
+
+        if not df_new.empty:
             added, total = merge_csv(HISTORY_PATH, df_new, ["match_id"])
             st.success(f"과거자료 저장 완료: 신규/정리 {added}건 · 전체 {total}건")
-            st.dataframe(df_new.head(30), width="stretch")
+        else:
+            st.warning("이번 실행에서 새로 수집된 과거자료가 없습니다. 기존 저장자료로 분석을 시도합니다.")
+
+        history_df = read_csv_safe(HISTORY_PATH)
+        upcoming_df = read_csv_safe(UPCOMING_PATH)
+        team_status_df = read_csv_safe(TEAM_STATUS_PATH)
+
+        ok, msg, analysis_df, mobile_df = save_analysis_and_mobile(history_df, upcoming_df, team_status_df)
+        if ok:
+            st.success(msg)
+        else:
+            st.error(msg)
+
+        with st.expander("수집 로그", expanded=False):
+            st.dataframe(pd.DataFrame(run_logs), width="stretch")
+
+        with st.expander("분석 점수표", expanded=True):
+            if analysis_df.empty:
+                st.info("분석 점수표 없음")
+            else:
+                st.dataframe(analysis_df, width="stretch")
+
+        with st.expander("모바일 추천 저장 결과", expanded=True):
+            if mobile_df.empty:
+                st.info("모바일 추천 없음")
+            else:
+                st.dataframe(mobile_df, width="stretch")
+
+    st.markdown("### 저장 상태")
+    saved_tabs = st.tabs(["source_logs", "analysis_scores", "mobile_recommendations"])
+    with saved_tabs[0]:
+        df = read_csv_safe(SOURCE_LOGS_PATH)
+        st.dataframe(df.tail(100) if not df.empty else df, width="stretch")
+    with saved_tabs[1]:
+        df = read_csv_safe(ANALYSIS_PATH)
+        st.dataframe(df if not df.empty else df, width="stretch")
+    with saved_tabs[2]:
+        df = read_csv_safe(MOBILE_RECOMMENDATIONS_PATH)
+        st.dataframe(df if not df.empty else df, width="stretch")
+
+
+
+def render_collect_tab():
+    st.subheader("📥 과거 경기결과 자동 수집")
+    st.caption("사이트는 Football-Data.co.uk 한 개만 사용합니다. 시즌은 앱이 자동으로 후보를 검사하고, 되는 자료만 저장합니다.")
+    st.info("버튼 하나만 누르면 됩니다. 수동으로 시즌 코드나 URL을 복사할 필요 없습니다.")
+    st.markdown("**고정 자료 사이트:** https://www.football-data.co.uk/")
+    st.markdown("**다운로드 페이지:** https://www.football-data.co.uk/downloadm.php")
+
+    default_leagues = ["E0", "E1", "D1", "SP1", "I1", "F1"]
+
+    with st.expander("자동 수집 설정 보기", expanded=False):
+        st.write("자동 시즌 후보:", ", ".join(auto_season_codes()))
+        selected = st.multiselect(
+            "수집 리그",
+            options=list(LEAGUE_NAMES.keys()),
+            default=default_leagues,
+            format_func=lambda x: f"{x} · {LEAGUE_NAMES[x]}",
+        )
+        st.caption("그냥 두면 기본 주요 리그 전체를 수집합니다.")
+
+        preview_rows = []
+        for season in auto_season_codes()[:3]:
+            for code in selected[:3]:
+                preview_rows.append({
+                    "시즌": season,
+                    "리그": code,
+                    "주소예시": FOOTBALL_DATA_CSV_ROOT.format(season=season, league=code),
+                })
+        st.dataframe(pd.DataFrame(preview_rows), width="stretch")
+
+    if "selected" not in locals():
+        selected = default_leagues
+
+    if st.button("자동으로 되는 시즌/리그 찾아서 과거자료 저장", type="primary"):
+        with st.spinner("Football-Data.co.uk 자동 탐색 중..."):
+            df_new, logs = fetch_football_data_uk("AUTO", selected)
+
+        log_df = pd.DataFrame(logs)
+        with st.expander("자동 탐색 로그", expanded=True):
+            st.dataframe(log_df, width="stretch")
+
+        if df_new.empty:
+            st.error("수집된 완료 경기 데이터가 없습니다. 사이트 구조 변경 또는 현재 시즌 미개시일 수 있습니다.")
+        else:
+            added, total = merge_csv(HISTORY_PATH, df_new, ["match_id"])
+            if "source" in df_new.columns:
+                season_series = df_new["source"].astype(str).str.extract(r"football_data_uk_(\d{4})_")[0]
+                seasons_found = sorted(season_series.dropna().unique().tolist())
+            else:
+                seasons_found = []
+            season_text = ", ".join(seasons_found) if seasons_found else "확인됨"
+            st.success(f"자동 수집 완료: 신규/정리 {added}건 · 전체 {total}건 · 시즌 {season_text}")
+            st.dataframe(df_new.head(50), width="stretch")
 
 
 def render_upcoming_tab():
     st.subheader("📅 예정 경기 입력")
     st.caption("추천카드는 여기 저장된 예정 경기만 대상으로 만듭니다. 예정경기는 점수가 없어야 정상입니다.")
+    st.info("시즌 코드와 Football-Data 사이트 주소는 ③ 과거자료 수집 탭에 있습니다. 이 탭은 앞으로 할 경기만 넣는 곳입니다.")
 
     sample = """date,kickoff_kst,league,home_team,away_team,status,source,match_id
 2026-07-10,20:00,잉글랜드 프리미어리그,Liverpool,Man City,SCHEDULED,manual,manual_001
@@ -748,15 +980,27 @@ def render_analysis_tab(history_df, upcoming_df, team_status_df):
     for result in results:
         render_card(result)
 
+    analysis_df, mobile_df = build_analysis_outputs(history_df, upcoming_df, team_status_df)
+
+    if st.button("현재 분석 결과를 모바일 추천/허브에 저장", type="primary"):
+        ok, msg, saved_analysis_df, saved_mobile_df = save_analysis_and_mobile(history_df, upcoming_df, team_status_df)
+        if ok:
+            st.success(msg)
+        else:
+            st.error(msg)
+
     with st.expander("분석 원자료", expanded=False):
-        st.dataframe(pd.DataFrame(results), width="stretch")
+        st.dataframe(analysis_df, width="stretch")
+
+    with st.expander("모바일 추천 원자료", expanded=False):
+        st.dataframe(mobile_df, width="stretch")
 
     return results
 
 
 def render_data_tab(history_df, upcoming_df, team_status_df):
     st.subheader("📊 저장 데이터")
-    tab1, tab2, tab3 = st.tabs(["과거자료", "예정경기", "팀 현재상태"])
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["과거자료", "예정경기", "팀 현재상태", "수집로그", "분석점수", "모바일추천"])
 
     with tab1:
         if history_df.empty:
@@ -793,6 +1037,30 @@ def render_data_tab(history_df, upcoming_df, team_status_df):
                 "team_status.csv",
                 "text/csv",
             )
+
+    with tab4:
+        df = read_csv_safe(SOURCE_LOGS_PATH)
+        if df.empty:
+            st.info("수집로그 없음")
+        else:
+            st.dataframe(df.tail(200), width="stretch")
+            st.download_button("수집로그 CSV 다운로드", df.to_csv(index=False).encode("utf-8-sig"), "source_logs.csv", "text/csv")
+
+    with tab5:
+        df = read_csv_safe(ANALYSIS_PATH)
+        if df.empty:
+            st.info("분석점수 없음")
+        else:
+            st.dataframe(df, width="stretch")
+            st.download_button("분석점수 CSV 다운로드", df.to_csv(index=False).encode("utf-8-sig"), "analysis_scores.csv", "text/csv")
+
+    with tab6:
+        df = read_csv_safe(MOBILE_RECOMMENDATIONS_PATH)
+        if df.empty:
+            st.info("모바일추천 없음")
+        else:
+            st.dataframe(df, width="stretch")
+            st.download_button("모바일추천 CSV 다운로드", df.to_csv(index=False).encode("utf-8-sig"), "mobile_recommendations.csv", "text/csv")
 
 
 def main():
@@ -833,26 +1101,30 @@ def main():
     st.markdown("---")
 
     tabs = st.tabs([
-        "🔥 분석",
-        "📅 예정경기",
-        "📥 과거자료 수집",
-        "🧑‍💼 감독·선수",
-        "📊 저장데이터",
+        "① 🚀 전체실행",
+        "② 🔥 분석",
+        "③ 📅 예정경기",
+        "④ 📥 과거자료 자동수집",
+        "⑤ 🧑‍💼 감독·선수",
+        "⑥ 📊 저장데이터",
     ])
 
     with tabs[0]:
-        render_analysis_tab(history_df, upcoming_df, team_status_df)
+        render_pipeline_tab()
 
     with tabs[1]:
-        render_upcoming_tab()
+        render_analysis_tab(history_df, upcoming_df, team_status_df)
 
     with tabs[2]:
-        render_collect_tab()
+        render_upcoming_tab()
 
     with tabs[3]:
-        render_team_status_tab()
+        render_collect_tab()
 
     with tabs[4]:
+        render_team_status_tab()
+
+    with tabs[5]:
         render_data_tab(history_df, upcoming_df, team_status_df)
 
     st.markdown("---")
