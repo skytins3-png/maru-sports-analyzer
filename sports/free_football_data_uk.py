@@ -44,8 +44,34 @@ def _safe_int_score(value):
         return ""
 
 
+def _season_candidates(season_code: str):
+    clean = str(season_code).strip().replace("/", "")
+    candidates = []
+
+    if clean:
+        candidates.append(clean)
+
+    if len(clean) == 4 and clean.isdigit():
+        reversed_pair = clean[2:] + clean[:2]
+        if reversed_pair not in candidates:
+            candidates.append(reversed_pair)
+
+    for fallback in ["2526", "2425"]:
+        if fallback not in candidates:
+            candidates.append(fallback)
+
+    return candidates
+
+
+def _url_candidates(season: str, league_code: str):
+    return [
+        f"https://www.football-data.co.uk/mmz4281/{season}/{league_code}.csv",
+        f"https://www.football-data.co.uk/mmz4371/{season}/{league_code}.csv",
+    ]
+
+
 def fetch_football_data_uk_history(
-    season_code: str = "2627",
+    season_code: str = "2526",
     league_codes: Iterable[str] = ("E0", "D1", "SP1"),
     timeout: int = 10,
 ) -> Tuple[pd.DataFrame, List[dict]]:
@@ -56,88 +82,96 @@ def fetch_football_data_uk_history(
     rows = []
     logs = []
 
-    clean_season = str(season_code).strip().replace("/", "")
-    if not clean_season.isdigit() or len(clean_season) != 4:
+    clean_input = str(season_code).strip().replace("/", "")
+    if not clean_input.isdigit() or len(clean_input) != 4:
         return pd.DataFrame(), [{
             "source": "football-data.co.uk",
             "ok": False,
-            "message": "시즌 코드는 2526, 2627처럼 4자리 숫자여야 합니다.",
+            "message": "시즌 코드는 2526처럼 4자리 숫자여야 합니다. 예: 2025/26 = 2526",
         }]
 
-    for code in league_codes:
-        code = str(code).strip().upper()
-        league_name = LEAGUE_NAMES.get(code, code)
-        url = f"https://www.football-data.co.uk/mmz4371/{clean_season}/{code}.csv"
+    for season in _season_candidates(clean_input):
+        for code in league_codes:
+            code = str(code).strip().upper()
+            league_name = LEAGUE_NAMES.get(code, code)
+            found_for_league = False
 
-        log = {
-            "source": "football-data.co.uk",
-            "league_code": code,
-            "league": league_name,
-            "url": url,
-            "ok": False,
-            "http_status": "",
-            "rows": 0,
-            "message": "",
-        }
-
-        try:
-            response = requests.get(
-                url,
-                timeout=timeout,
-                headers={"User-Agent": "MARU-Sports-Analyzer/1.0"},
-            )
-            log["http_status"] = str(response.status_code)
-
-            if response.status_code != 200:
-                log["message"] = f"HTTP {response.status_code}"
-                logs.append(log)
-                continue
-
-            csv_text = response.content.decode("utf-8", errors="ignore")
-            df_raw = pd.read_csv(StringIO(csv_text))
-
-            required_cols = ["Date", "HomeTeam", "AwayTeam", "FTHG", "FTAG"]
-            missing = [c for c in required_cols if c not in df_raw.columns]
-            if missing:
-                log["message"] = f"필수 컬럼 누락: {missing}"
-                logs.append(log)
-                continue
-
-            df_raw = df_raw.dropna(subset=required_cols)
-
-            added = 0
-            for _, row in df_raw.iterrows():
-                date = _normalize_date(row.get("Date", ""))
-                home = str(row.get("HomeTeam", "")).strip()
-                away = str(row.get("AwayTeam", "")).strip()
-                hs = _safe_int_score(row.get("FTHG"))
-                aw = _safe_int_score(row.get("FTAG"))
-
-                if not date or not home or not away or hs == "" or aw == "":
-                    continue
-
-                rows.append({
-                    "date": date,
-                    "kickoff_kst": "",
+            for url in _url_candidates(season, code):
+                log = {
+                    "source": "football-data.co.uk",
+                    "season": season,
+                    "league_code": code,
                     "league": league_name,
-                    "home_team": home,
-                    "away_team": away,
-                    "home_score": hs,
-                    "away_score": aw,
-                    "status": "FT",
-                    "source": f"football_data_uk_{code}",
-                    "match_id": f"fd_uk_{clean_season}_{code}_{date}_{home}_{away}",
-                })
-                added += 1
+                    "url": url,
+                    "ok": False,
+                    "http_status": "",
+                    "rows": 0,
+                    "message": "",
+                }
 
-            log["ok"] = True
-            log["rows"] = added
-            log["message"] = f"{added}건 변환"
-            logs.append(log)
+                try:
+                    response = requests.get(
+                        url,
+                        timeout=timeout,
+                        headers={"User-Agent": "MARU-Sports-Analyzer/1.0"},
+                    )
+                    log["http_status"] = str(response.status_code)
 
-        except Exception as exc:
-            log["message"] = str(exc)
-            logs.append(log)
+                    if response.status_code != 200:
+                        log["message"] = f"HTTP {response.status_code}"
+                        logs.append(log)
+                        continue
+
+                    csv_text = response.content.decode("utf-8", errors="ignore")
+                    df_raw = pd.read_csv(StringIO(csv_text))
+
+                    required_cols = ["Date", "HomeTeam", "AwayTeam", "FTHG", "FTAG"]
+                    missing = [c for c in required_cols if c not in df_raw.columns]
+                    if missing:
+                        log["message"] = f"필수 컬럼 누락: {missing}"
+                        logs.append(log)
+                        continue
+
+                    df_raw = df_raw.dropna(subset=required_cols)
+
+                    added = 0
+                    for _, row in df_raw.iterrows():
+                        date = _normalize_date(row.get("Date", ""))
+                        home = str(row.get("HomeTeam", "")).strip()
+                        away = str(row.get("AwayTeam", "")).strip()
+                        hs = _safe_int_score(row.get("FTHG"))
+                        aw = _safe_int_score(row.get("FTAG"))
+
+                        if not date or not home or not away or hs == "" or aw == "":
+                            continue
+
+                        rows.append({
+                            "date": date,
+                            "kickoff_kst": "",
+                            "league": league_name,
+                            "home_team": home,
+                            "away_team": away,
+                            "home_score": hs,
+                            "away_score": aw,
+                            "status": "FT",
+                            "source": f"football_data_uk_{season}_{code}",
+                            "match_id": f"fd_uk_{season}_{code}_{date}_{home}_{away}",
+                        })
+                        added += 1
+
+                    log["ok"] = True
+                    log["rows"] = added
+                    log["message"] = f"{added}건 변환"
+                    logs.append(log)
+                    found_for_league = True
+                    break
+
+                except Exception as exc:
+                    log["message"] = str(exc)
+                    logs.append(log)
+
+            if found_for_league:
+                continue
 
     df = pd.DataFrame(rows)
     if df.empty:
@@ -146,6 +180,7 @@ def fetch_football_data_uk_history(
     for col in df.columns:
         df[col] = df[col].astype(str)
 
+    df = df.drop_duplicates(subset=["match_id"], keep="last")
     return df, logs
 
 
