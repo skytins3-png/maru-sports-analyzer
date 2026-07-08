@@ -42,6 +42,68 @@ patch_streamlit_dataframe(st)
 KST = timezone(timedelta(hours=9))
 
 
+def clean_ui_text(text_mapped_dict):
+    """UI 카드에서 발생하는 어순 및 번역 오류 텍스트 패치 기기"""
+    if not isinstance(text_mapped_dict, dict):
+        return text_mapped_dict
+        
+    # 터진 텍스트 직접 치환 보정 벨트
+    bad_translations = {
+        "미음": "매우 높음",
+        "어색하다": "오버/언더 기준",
+        "홈승부": "홈승 후보",
+        "무승부하다": "무승부 후보"
+    }
+    
+    cleaned = {}
+    for k, v in text_mapped_dict.items():
+        if isinstance(v, str):
+            for bad, good in bad_translations.items():
+                v = v.replace(bad, good)
+        cleaned[k] = v
+    return cleaned
+
+
+def parse_sportmonks_raw_response(sportmonks_payload):
+    """
+    Sportmonks API 응답 원본 패킷에서 
+    participants 뎁스를 깨부수고 표준 규격 데이터프레임으로 추출하는 커넥터
+    """
+    standardized_rows = []
+    if not sportmonks_payload or "data" not in sportmonks_payload:
+        return pd.DataFrame()
+        
+    for item in sportmonks_payload.get("data", []):
+        home_team = "Unknown Home"
+        away_team = "Unknown Away"
+        
+        # participants 배열 내부 루프를 돌며 홈/원정 스위칭 분리
+        for part in item.get("participants", []):
+            location = part.get("meta", {}).get("location", "")
+            if location == "home":
+                home_team = part.get("name", "Home")
+            elif location == "away":
+                away_team = part.get("name", "Away")
+                
+        starting_at = item.get("starting_at", "")
+        match_date = starting_at.split(" ")[0] if starting_at else datetime.now(KST).strftime("%Y-%m-%d")
+        kickoff_time = starting_at.split(" ")[1][:5] if " " in starting_at else "00:00"
+        
+        standardized_rows.append({
+            "date": match_date,
+            "kickoff_kst": kickoff_time,
+            "league": item.get("name", f"League_{item.get('league_id', 'Unknown')}").split(" vs ")[0],
+            "home_team": home_team,
+            "away_team": away_team,
+            "home_score": 0,
+            "away_score": 0,
+            "status": "FT" if item.get("state_id") == 5 else "SCHEDULED",
+            "source": "sportmonks_api",
+            "match_id": str(item.get("id", ""))
+        })
+    return pd.DataFrame(standardized_rows)
+
+
 def main():
     st.set_page_config(
         page_title="MARU SPORTS ANALYZER",
@@ -67,28 +129,41 @@ def main():
     now_kst = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S KST")
 
     # ==========================================
-    # 🔄 무료 경기자료 데이터 수집 허브 로직
+    # 🔄 무료 경기자료 데이터 수집 허브 파이프라인
     # ==========================================
     fixtures = []
     data_source_info = "로컬 저장소"
-
-    # 1순위: 캐싱된 실제 경기 데이터 로드 시도
     history_csv_path = "cache/history_matches.csv"
+
+    # [백엔드 자동 처리 연동] 만약 진단 패널 등 세션에 Sportmonks 원본 로우 데이터 수집 흔적이 있다면 병합 자동 시도
+    if st.session_state.get("sportmonks_raw_debug_payload"):
+        try:
+            df_parsed = parse_sportmonks_raw_response(st.session_state["sportmonks_raw_debug_payload"])
+            if not df_parsed.empty:
+                os.makedirs("cache", exist_ok=True)
+                if os.path.exists(history_csv_path):
+                    df_existing = pd.read_csv(history_csv_path)
+                    df_total = pd.concat([df_existing, df_parsed]).drop_duplicates(subset=["date", "home_team", "away_team"])
+                else:
+                    df_total = df_parsed
+                df_total.to_csv(history_csv_path, index=False)
+                st.sidebar.success(f"Sportmonks 실데이터 {len(df_parsed)}건 동기화 완료!")
+        except Exception as _sync_err:
+            st.sidebar.warning(f"Sportmonks 실데이터 허브 변환 스킵: {_sync_err}")
+
+    # 1순위: 캐싱된 수집 허브 경기 데이터 파일 로드
     if os.path.exists(history_csv_path):
         try:
             df_local = pd.read_csv(history_csv_path)
             if not df_local.empty:
-                # ArrowTypeError 방지를 위해 '값' 또는 object 타입 클리닝
                 if '값' in df_local.columns:
                     df_local['값'] = df_local['값'].astype(str)
-                
-                # 데이터프레임을 레코드 딕셔너리 리스트로 변환
                 fixtures = df_local.to_dict(orient="records")
                 data_source_info = f"실제 수집 데이터 ({len(fixtures)}건)"
         except Exception as e:
             st.sidebar.error(f"로컬 수집 허브 파일 로드 실패: {e}")
 
-    # 2순위: 만약 수집된 실데이터가 0건이라면 가이드 및 샘플 모드 전환
+    # 2순위: 만약 파일 시스템 내 데이터가 0건이라면 가이드 샘플 전환
     is_sample_mode = False
     if not fixtures:
         fixtures = load_sample_fixtures()
@@ -101,10 +176,9 @@ def main():
     analyses = []
 
     # ==========================================
-    # 🛡️ 데이터 분석 및 KeyError 방어 처리 루프
+    # 🛡️ 데이터 분석 및 KeyError 가드월 가동
     # ==========================================
     for idx, fixture in enumerate(fixtures):
-        # 🚨 [KeyError 1단계 방어벽] 기본 식별 데이터 주입
         if "match_no" not in fixture:
             fixture["match_no"] = fixture.get("match_id", idx + 1)
         if "match_id" not in fixture:
@@ -117,25 +191,23 @@ def main():
             fixture["league"] = "Unknown League"
         if "date" not in fixture:
             fixture["date"] = datetime.now(KST).strftime("%Y-%m-%d")
-
-        # 🚨 [KeyError 2단계 방어벽] 시간 데이터 세부 매핑 보완 (터진 에러 원천 차단)
         if "kickoff_kst" not in fixture:
-            # 딕셔너리에 'time', 'kickoff', 'timestamp' 등이 있다면 그것을 우선 차용하고 없으면 현재 시각 할당
             fixture["kickoff_kst"] = fixture.get("time", fixture.get("kickoff", "00:00"))
 
-        # 인프라 핵심 엔진 가동
+        # 스냅샷 및 마루 통계 코어 연산 가동
         snapshot = build_pre_match_snapshot(fixture, cache=cache, use_slow_api=use_slow_api)
         snapshots.append(snapshot)
         
         analysis = analyze_match(fixture, snapshot)
         analyses.append(analysis)
         
-        # 여기서 하위 모듈(football_recommender.py)의 KeyError를 원천적으로 틀어막습니다.
         rec = build_recommendations(fixture, snapshot, analysis)
         if rec:
+            # 💡 [UI 패치 가동] 출력 직전에 꼬인 한글 텍스트 정밀 클리닝
+            rec = clean_ui_text(rec)
             recommendations.append(rec)
 
-    # 대시보드 상태창 출력
+    # 대시보드 마스터 상태창 출력
     render_system_status(
         now_kst=now_kst,
         fixture_count=len(fixtures),
@@ -145,7 +217,7 @@ def main():
     )
     st.caption(f"📊 **현재 활성화된 데이터 수집원:** {data_source_info}")
 
-    # UI 컴포넌트 배치
+    # UI 컴포넌트 순차 배치
     st.divider()
     render_history_range_test_panel()
 
@@ -155,7 +227,7 @@ def main():
     st.divider()
     render_sportmonks_diagnostic_panel()
 
-    # 결과 분석 카드 출력 혹은 자료부족 가드 활성화
+    # 결과 카드 출력 가드 시스템
     if recommendations and not is_sample_mode:
         render_mobile_cards(recommendations)
     elif is_sample_mode:
@@ -167,7 +239,7 @@ def main():
         render_empty_guard()
 
     # ==========================================
-    # 📊 데이터프레임 출력 파트 (Arrow 직렬화 에러 완벽 방어)
+    # 📊 데이터프레임 원자료 출력 파트 (Arrow TypeError 완벽 케어)
     # ==========================================
     st.divider()
     with st.expander("경기 원자료 보기"):
@@ -185,7 +257,6 @@ def main():
     with st.expander("기존 SKYTOTO 듀얼 엔진 자동 비교", expanded=False):
         dual_rows = []
         for idx_d, fixture in enumerate(fixtures):
-            # 루프 도는 경기 원천 데이터 정합성 보장 재확인
             if "match_id" not in fixture:
                 fixture["match_id"] = f"match_dual_{idx_d + 1}"
             
@@ -207,7 +278,7 @@ def main():
 
     render_dual_engine_panel()
 
-    # 구글 시트 웹앱 전송 연동 파트
+    # 구글 시트 업스케일링 전송
     if save_to_sheet and recommendations and not is_sample_mode:
         payload = {
             "type": "mobile_recommend",
