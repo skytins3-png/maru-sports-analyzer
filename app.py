@@ -14,7 +14,7 @@ import streamlit as st
 
 KST = timezone(timedelta(hours=9))
 APP_NAME = "MARU SPORTS PROTO FIXTURE HUB"
-APP_VERSION = "v17-analysis-offline-checklist"
+APP_VERSION = "v19-ticket-matching-premium-mobile"
 DATA_DIR = "data"
 LOG_DIR = "logs"
 PAYLOAD_DIR = "payloads"
@@ -2403,9 +2403,271 @@ def render_mobile_tab():
     with st.expander("숨김: 모바일 추천 원본 전체", expanded=False):
         st.dataframe(ko_df(df), width="stretch", hide_index=True)
 
+def get_app_mode():
+    """URL ?mode=mobile 이면 모바일 전용 화면으로 완전 분기한다."""
+    try:
+        params = st.query_params
+        mode = params.get("mode", "pc")
+        if isinstance(mode, list):
+            mode = mode[0] if mode else "pc"
+        return str(mode).lower().strip()
+    except Exception:
+        try:
+            params = st.experimental_get_query_params()
+            mode = params.get("mode", ["pc"])[0]
+            return str(mode).lower().strip()
+        except Exception:
+            return "pc"
+
+
+
+def mobile_only_css():
+    st.markdown("""
+<style>
+:root { --maru-bg:#050b12; --maru-card:#0d1724; --maru-card2:#101f31; --maru-line:#1d3f59; --maru-green:#67e84a; --maru-green2:#20c25d; --maru-text:#f5f8fb; --maru-sub:#9fb6cb; --maru-warn:#ffd76a; }
+[data-testid="stToolbar"], [data-testid="stDecoration"], #MainMenu, footer {visibility:hidden !important; height:0 !important;}
+[data-testid="stHeader"] {background: transparent !important; height:0px !important;}
+.stApp {background: radial-gradient(circle at 20% 0%, #0b2b22 0%, #050b12 42%, #03070d 100%) !important; color: var(--maru-text) !important;}
+.block-container {padding-top:.35rem !important; padding-left:.55rem !important; padding-right:.55rem !important; max-width:640px !important;}
+.maru-hero {border:1px solid #24506e; border-radius:22px; padding:15px 14px; margin:2px 0 10px 0; background:linear-gradient(135deg,#071421,#0c2236 56%,#0b2f22); box-shadow:0 8px 28px rgba(0,0,0,.28);} 
+.maru-hero-title {font-size:1.42rem; font-weight:1000; letter-spacing:-.04em; color:#fff; line-height:1.18;}
+.maru-hero-title b {color:var(--maru-green);}
+.maru-hero-sub {font-size:.78rem; color:#b9d0e4; margin-top:5px; font-weight:700;}
+.maru-status-strip {display:flex; flex-wrap:wrap; gap:6px; margin-top:10px;}
+.maru-status-pill {border:1px solid #27624a; border-radius:999px; background:#0b2f22; color:#dfffe8; padding:5px 9px; font-size:.72rem; font-weight:900;}
+.maru-status-pill.warn {border-color:#755c22;background:#2d240c;color:#ffe8a0;}
+.step-tabs {display:grid; grid-template-columns:1fr 1fr 1fr; gap:7px; margin:10px 0 12px 0;}
+.step-pill {border-radius:14px; padding:9px 5px; text-align:center; background:#101e2e; border:1px solid #1e3b57; color:#bed1e3; font-size:.82rem; font-weight:950;}
+.step-pill.active {background:linear-gradient(135deg,#23bd5c,#70ec48); color:#06120a; border:none;}
+.date-row {display:flex; gap:7px; margin:8px 0 10px; overflow:auto; padding-bottom:2px;}
+.date-chip {white-space:nowrap; border-radius:999px; padding:7px 12px; background:#101e2e; border:1px solid #1e3b57; color:#bed1e3; font-size:.82rem; font-weight:900;}
+.date-chip.on {background:#63e64e;color:#06120a;border:none;}
+.match-count {font-size:.85rem; color:#c7d9e9; font-weight:900; margin:8px 0 6px;}
+.league-title {font-size:.88rem; font-weight:1000; color:#b8dcff; margin:12px 0 6px;}
+.ticket-card {border:1px solid #213d57; background:linear-gradient(180deg,#0f1c2b,#08131e); border-radius:18px; padding:10px 11px; margin:8px 0; box-shadow:0 6px 18px rgba(0,0,0,.23);}
+.ticket-top {display:flex; justify-content:space-between; align-items:center; gap:8px; color:#91aac0; font-size:.72rem; font-weight:850;}
+.ticket-teams {display:grid; grid-template-columns:1fr 45px 1fr; gap:7px; align-items:center; margin:9px 0 7px;}
+.team-name {font-size:1.02rem; font-weight:1000; color:#fff; overflow:hidden; white-space:nowrap; text-overflow:ellipsis;}
+.team-away {text-align:right;}
+.vs-badge {text-align:center; font-size:.73rem; color:#92a7ba; font-weight:900;}
+.market-grid {display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px; margin-top:7px;}
+.market-box {border:1px solid #223b51; background:#0a1521; border-radius:12px; padding:7px 4px; text-align:center; min-height:58px;}
+.market-label {font-size:.62rem; color:#9eb4c7; font-weight:900;}
+.market-value {font-size:.82rem; color:#fff; font-weight:1000; margin-top:2px;}
+.market-note {font-size:.62rem; color:#68e862; font-weight:900; margin-top:2px;}
+.ai-line {display:flex; justify-content:space-between; align-items:center; gap:8px; margin-top:8px; padding:8px 9px; border-radius:12px; background:#0b2d1c; color:#dfffe0; font-size:.78rem; font-weight:950;}
+.ai-line .risk {color:#ffdd78;}
+.card-actions {display:grid; grid-template-columns:1fr 1fr; gap:7px; margin-top:8px;}
+.action-mini {border-radius:11px; padding:8px 6px; text-align:center; font-size:.75rem; font-weight:950; background:#173b28; color:#9cff9b; border:1px solid #2a7345;}
+.action-mini.secondary {background:#101e2e;color:#c9ddf0;border-color:#264862;}
+.stExpander {border:1px solid #1e3b57 !important; border-radius:14px !important; background:#0b1420 !important;}
+.stExpander summary {font-weight:900 !important; color:#e5f2ff !important;}
+div[data-testid="stMetric"] {background:#0d1724; border:1px solid #213d57; border-radius:12px; padding:8px;}
+.check-panel {border:1px solid #37602e; background:#101b14; border-radius:14px; padding:10px; margin:8px 0;}
+.check-title {font-weight:1000; color:#9aff76; margin-bottom:6px;}
+.summary-ticket {border:1px dashed #e5c27b; border-radius:14px; padding:9px; background:#1f1a10; color:#ffe9b7; margin:8px 0; font-size:.82rem; font-weight:850;}
+.footer-note {text-align:center; color:#9fb6cb; font-size:.72rem; padding:16px 0 4px;}
+/* Streamlit 기본 버튼을 모바일 앱 버튼처럼 */
+.stButton button {border-radius:12px !important; font-weight:900 !important;}
+@media(max-width:430px){.block-container{padding-left:.45rem!important;padding-right:.45rem!important}.maru-hero-title{font-size:1.28rem}.market-grid{gap:4px}.market-box{padding:6px 2px}.team-name{font-size:.98rem}.ai-line{font-size:.72rem}.step-pill{font-size:.76rem}}
+</style>
+""", unsafe_allow_html=True)
+
+
+def _market_for_card(mdf: pd.DataFrame, market_name: str):
+    if mdf is None or mdf.empty:
+        return None
+    row = pick_market_row(mdf, market_name)
+    return row if row else None
+
+
+def _market_box_html(label: str, row: dict, fallback: str = "분석대기") -> str:
+    if row:
+        pick = compact_pick_text(row)
+        conf = clean(row.get("confidence")) or "0"
+        risk = clean(row.get("risk")) or "-"
+        return f"<div class='market-box'><div class='market-label'>{html_escape(label)}</div><div class='market-value'>{html_escape(pick)}</div><div class='market-note'>신뢰 {html_escape(conf)} · {html_escape(risk)}</div></div>"
+    return f"<div class='market-box'><div class='market-label'>{html_escape(label)}</div><div class='market-value'>{html_escape(fallback)}</div><div class='market-note'>자료확인</div></div>"
+
+
+def _ticket_summary_box() -> str:
+    return """
+<div class='summary-ticket'>
+  <b>실물 티켓 매칭용 요약</b><br>
+  선택 경기 수 · 예상 배당률 · 총투표금액은 현장/공식 용지와 직접 대조합니다.<br>
+  자동구매/자동결제 없음 · 오프라인 수동 체크 전용
+</div>
+"""
+
+
+def render_premium_match_expanders(mdf: pd.DataFrame, context: str, match_label: str):
+    if mdf is None or mdf.empty:
+        return
+    first = mdf.iloc[0].to_dict()
+    main = best_match_candidate(mdf)
+    reasons = split_reasons(clean(main.get("reasons"))) if main else {}
+    home, away = split_match_teams(first)
+    home_ko, away_ko = ko_team(home), ko_team(away)
+    mid = clean(first.get("match_id")) or safe_key(context, match_label, home_ko, away_ko)
+    with st.expander(f"🔎 분석 이유 펼치기 — {home_ko} vs {away_ko}", expanded=False):
+        c1, c2, c3 = st.columns(3)
+        c1.metric("AI 예상", clean(main.get("pick")) if main else "분석대기")
+        c2.metric("신뢰도", clean(main.get("confidence")) if main else "0")
+        c3.metric("위험도", clean(main.get("risk")) if main else "-")
+        st.markdown("**왜 이렇게 예상되나?**")
+        st.write(why_summary_from_row(main) if main else "분석자료가 부족합니다.")
+        st.markdown("**핵심 근거**")
+        st.write(f"- 최근폼: {reasons.get('recent_form', '자료 없음')}")
+        st.write(f"- 홈/원정 성적: {reasons.get('home_away_form', '자료 없음')}")
+        st.write(f"- 상대전적: {reasons.get('h2h', '자료 없음')}")
+        st.write(f"- 부족자료: {clean(main.get('missing_data')) if main else '자료 없음'}")
+        st.caption("분석 이유는 기본 숨김이며, 필요할 때만 펼쳐서 확인합니다.")
+    with st.expander(f"🧾 오프라인 수동 구매 체크표 — {home_ko} vs {away_ko}", expanded=False):
+        st.markdown(_ticket_summary_box(), unsafe_allow_html=True)
+        st.markdown("<div class='check-panel'><div class='check-title'>직접 확인 후 체크</div>", unsafe_allow_html=True)
+        checks = [
+            f"경기명 확인: {home_ko} vs {away_ko}",
+            f"시간 확인: {clean(first.get('kickoff_kst')) or '-'}",
+            "승무패 번호/배당 확인",
+            "핸디캡 기준점/배당 확인",
+            "언더/오버 기준점/배당 확인",
+            "라이브스코어 상태 확인",
+            "내가 직접 마킹 완료",
+        ]
+        for idx, item in enumerate(checks):
+            st.checkbox(item, key=f"v19_chk_{context}_{safe_key(mid, idx, item)}")
+        st.markdown("</div>", unsafe_allow_html=True)
+        st.info("자동구매/자동결제 없음. 오프라인에서 직접 확인 후 수동 구매 체크만 지원합니다.")
+
+
+def render_mobile_premium_ticket_app():
+    mobile_only_css()
+    diag = build_diagnosis()
+    counts = diag.get("counts", {})
+    st.markdown(f"""
+<div class='maru-hero'>
+  <div class='maru-hero-title'>모바일은 보기 편하게,<br><b>실물 티켓과 맞춰 확인</b></div>
+  <div class='maru-hero-sub'>전체 경기 → 분석 보기 → 결과 확인 → 오프라인 수동 체크</div>
+  <div class='maru-status-strip'>
+    <span class='maru-status-pill'>허브 {diag.get('hub_url','OFF')}</span>
+    <span class='maru-status-pill'>시트 {diag.get('google_sheet_url','OFF')}</span>
+    <span class='maru-status-pill'>추천 {counts.get('mobile_recommendations',0)}건</span>
+    <span class='maru-status-pill'>전체경기 {counts.get('fixture_prediction_results',0)}건</span>
+    <span class='maru-status-pill warn'>자동구매 없음</span>
+  </div>
+</div>
+<div class='step-tabs'>
+  <div class='step-pill active'>1 전체 경기</div>
+  <div class='step-pill'>2 분석 보기</div>
+  <div class='step-pill'>3 수동 체크</div>
+</div>
+""", unsafe_allow_html=True)
+
+    board = read_csv(OUTPUT_FILES["fixture_prediction_results"])
+    analysis_all = read_csv(OUTPUT_FILES["analysis_scores"])
+    if board.empty:
+        board = build_fixture_prediction_results()
+    if board.empty or analysis_all.empty:
+        st.warning("자료가 부족합니다. PC에서 전체실행 + 허브 저장을 먼저 실행하세요.")
+        return
+    board = board.fillna("").sort_values(["date", "kickoff_kst", "league", "home_team"])
+    analysis_all = analysis_all.fillna("")
+    dates = sorted([d for d in board.get("date", pd.Series(dtype=str)).unique() if clean(d)])
+    if not dates:
+        st.warning("날짜 데이터가 없습니다.")
+        return
+    # 모바일에서는 기본으로 전체 날짜를 보여주되, 칩으로 날짜 감각을 준다.
+    chip_html = "".join([f"<span class='date-chip {'on' if i==0 else ''}'>{html_escape(date_label_kr(d))}</span>" for i,d in enumerate(dates[:5])])
+    st.markdown(f"<div class='date-row'>{chip_html}</div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='match-count'>전체 경기 {len(board)}건 · 현재 표시 {min(len(board), 80)}건</div>", unsafe_allow_html=True)
+    view = board.head(80)
+    for date in sorted(view["date"].unique()):
+        day = view[view["date"] == date]
+        st.markdown(f"<div class='league-title'>📅 {html_escape(date_label_kr(date))} · 전체 경기 {len(day)}건</div>", unsafe_allow_html=True)
+        for league in sorted(day["league"].unique()):
+            ldf = day[day["league"] == league]
+            st.markdown(f"<div class='league-title'>🏆 {html_escape(ko_league(league) or '리그 미확인')}</div>", unsafe_allow_html=True)
+            for _, rd_ser in ldf.iterrows():
+                rd = rd_ser.to_dict()
+                match_id = clean(rd.get("match_id"))
+                mdf = analysis_all[analysis_all.get("match_id", pd.Series(dtype=str)).astype(str) == match_id] if "match_id" in analysis_all.columns else pd.DataFrame()
+                if mdf.empty:
+                    continue
+                first = mdf.iloc[0].to_dict()
+                home, away = split_match_teams(first)
+                home_ko, away_ko = ko_team(home or rd.get("home_team")), ko_team(away or rd.get("away_team"))
+                one = _market_for_card(mdf, "승무패")
+                hcap = _market_for_card(mdf, "핸디캡")
+                uo = _market_for_card(mdf, "언더오버")
+                main = best_match_candidate(mdf)
+                main_text = compact_pick_text(main) if main else clean(rd.get("main_candidate")) or "분석대기"
+                conf = clean(main.get("confidence")) if main else "0"
+                risk = clean(main.get("risk")) if main else "-"
+                score = "예정"
+                hs, aw = clean(rd.get("home_score")), clean(rd.get("away_score"))
+                if hs != "" and aw != "": score = f"{hs}:{aw}"
+                st.markdown(f"""
+<div class='ticket-card'>
+  <div class='ticket-top'><span>⏱ {html_escape(clean(rd.get('kickoff_kst')) or '-')} · {html_escape(clean(rd.get('match_status')) or 'SCHEDULED')}</span><span>{html_escape(score)}</span></div>
+  <div class='ticket-teams'><div class='team-name'>{html_escape(home_ko)}</div><div class='vs-badge'>VS</div><div class='team-name team-away'>{html_escape(away_ko)}</div></div>
+  <div class='market-grid'>
+    {_market_box_html('승무패', one)}
+    {_market_box_html('핸디캡', hcap)}
+    {_market_box_html('언더/오버', uo)}
+  </div>
+  <div class='ai-line'><span>AI 추천: {html_escape(main_text)}</span><span>신뢰 {html_escape(conf)} · <span class='risk'>위험 {html_escape(risk)}</span></span></div>
+  <div class='card-actions'><div class='action-mini'>분석 보기</div><div class='action-mini secondary'>오프라인 체크</div></div>
+</div>
+""", unsafe_allow_html=True)
+                render_mobile_ticket_expanders(mdf, "v19mobile", f"{home_ko}_{away_ko}")
+    st.markdown("<div class='footer-note'>PC는 확인용 · 모바일은 실제 사용용 · 기존 기능 유지 · 허브 저장 확인 · 자동구매/자동결제 없음</div>", unsafe_allow_html=True)
+
+
+def render_mobile_ticket_expanders(mdf: pd.DataFrame, context: str, match_label: str):
+    # 모바일에서 더 짧게 보이도록 전용 펼침을 사용한다.
+    if mdf is None or mdf.empty:
+        return
+    first = mdf.iloc[0].to_dict()
+    main = best_match_candidate(mdf)
+    reasons = split_reasons(clean(main.get("reasons"))) if main else {}
+    home, away = split_match_teams(first)
+    home_ko, away_ko = ko_team(home), ko_team(away)
+    mid = clean(first.get("match_id")) or safe_key(context, match_label)
+    with st.expander(f"🔍 분석 이유 보기 — {home_ko} vs {away_ko}", expanded=False):
+        st.write(f"**AI 예상:** {compact_pick_text(main) if main else '분석대기'}")
+        st.write(f"**왜:** {why_summary_from_row(main) if main else '분석자료 부족'}")
+        st.write(f"- 최근폼: {reasons.get('recent_form', '자료 없음')}")
+        st.write(f"- 홈/원정: {reasons.get('home_away_form', '자료 없음')}")
+        st.write(f"- 상대전적: {reasons.get('h2h', '자료 없음')}")
+        st.write(f"- 부족자료: {clean(main.get('missing_data')) if main else '자료 없음'}")
+    with st.expander(f"🧾 실물 티켓 대조 / 오프라인 수동 체크 — {home_ko} vs {away_ko}", expanded=False):
+        st.markdown(_ticket_summary_box(), unsafe_allow_html=True)
+        checks = [
+            f"경기명 확인: {home_ko} vs {away_ko}",
+            f"시간 확인: {clean(first.get('kickoff_kst')) or '-'}",
+            "승무패 번호/배당 확인",
+            "핸디캡 기준점/배당 확인",
+            "언더/오버 기준점/배당 확인",
+            "라이브스코어 상태 확인",
+            "내가 직접 마킹 완료",
+        ]
+        for idx, item in enumerate(checks):
+            st.checkbox(item, key=f"v19_mobile_ticket_{safe_key(mid, idx, item)}")
+        st.warning("자동구매/자동결제 없음 · 오프라인 판매점에서 직접 확인 후 수동 구매")
+
+
+def render_mobile_only_app():
+    render_mobile_premium_ticket_app()
+    st.caption(f"{APP_VERSION} · 모바일 전용 티켓 매칭 모드 · 자동구매/자동결제 없음 · 오프라인 수동 확인")
+
 def main():
     ensure_dirs()
     st.set_page_config(page_title=APP_NAME, page_icon="⚽", layout="wide", initial_sidebar_state="collapsed")
+    mode = get_app_mode()
+    if mode in ["mobile", "m", "phone"]:
+        render_mobile_only_app()
+        return
+
     st.title("⚽ 마루 스포츠 프로토 일정 허브")
     st.caption("일정표 자동수집 → 과거 빅데이터 매칭 → 승부식 분석 → 모바일 추천 → 허브/구글시트 전송")
     render_metrics()
@@ -2420,7 +2682,7 @@ def main():
     with tabs[5]: render_mobile_tab()
     with tabs[6]: render_hub_tab()
     with tabs[7]: render_diagnosis_tab()
-    st.caption(f"{APP_VERSION} · {now_text()} · 자동구매/자동결제 없음 · 기존 기능 유지 + 라이브스코어식 전체 경기 예상/결과판")
+    st.caption(f"{APP_VERSION} · {now_text()} · 자동구매/자동결제 없음 · 기존 기능 유지 + 모바일 전용 mode 분리")
 
 
 if __name__ == "__main__":
