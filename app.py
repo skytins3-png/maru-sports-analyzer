@@ -2,6 +2,8 @@ import os
 import json
 import zipfile
 import hashlib
+import base64
+import urllib.parse
 from pathlib import Path
 from io import StringIO, BytesIO
 from datetime import datetime, timezone, timedelta
@@ -14,7 +16,8 @@ import streamlit as st
 
 KST = timezone(timedelta(hours=9))
 APP_NAME = "MARU SPORTS PROTO FIXTURE HUB"
-APP_VERSION = "v23-auto-schedule-proto-match"
+APP_VERSION = "v24-mobile-copy-qr-click-fix"
+MOBILE_APP_URL = "https://maru-sports-analyzer-lphmsfeyb47kgcrq4aevhs.streamlit.app/?mode=mobile"
 DATA_DIR = "data"
 LOG_DIR = "logs"
 PAYLOAD_DIR = "payloads"
@@ -2301,7 +2304,7 @@ def render_match_detail_expander(match_df: pd.DataFrame, context: str, match_lab
         detail["등급"] = detail.apply(lambda r: recommendation_grade(r.to_dict()), axis=1)
         cols = [c for c in ["market_type","line_value","pick","confidence","risk","data_sufficiency","등급","reasons","missing_data"] if c in detail.columns]
         if cols:
-            st.dataframe(detail[cols].rename(columns={**KOR_COLUMNS, "등급":"등급"}), width="stretch", hide_index=True)
+            st.dataframe(detail[cols].rename(columns={**KOR_COLUMNS, "등급":"등급"}), use_container_width=True, hide_index=True)
 
 def mobile_card_css():
     st.markdown("""
@@ -2364,6 +2367,53 @@ def render_download_bar(location: str):
             st.link_button("📊 구글시트 열기", sheet_url)
         else:
             st.caption("시트 URL OFF")
+
+
+
+def _qr_png_bytes_for_mobile_url(url: str) -> bytes:
+    """Return QR code PNG bytes. If qrcode package is unavailable, return empty bytes."""
+    try:
+        import qrcode
+        qr = qrcode.QRCode(version=1, box_size=7, border=2)
+        qr.add_data(url)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color="black", back_color="white")
+        buf = BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue()
+    except Exception:
+        return b""
+
+
+def render_pc_mobile_address_panel():
+    """v24: PC 화면 상단에서 모바일 주소를 크게 보여주고, 버튼이 안 눌려도 바로 복사 가능하게 한다."""
+    mobile_url = MOBILE_APP_URL
+    qr_bytes = _qr_png_bytes_for_mobile_url(mobile_url)
+    qr_img = ""
+    if qr_bytes:
+        qr_img = f"<img src='data:image/png;base64,{base64.b64encode(qr_bytes).decode()}' style='width:138px;height:138px;border-radius:14px;background:white;padding:8px;'/>"
+    fallback_qr = ""
+    if not qr_img:
+        fallback_qr = f"<div style='font-size:12px;color:#d8f3dc;'>QR 표시용 qrcode 패키지가 없으면 requirements.txt에 qrcode를 추가하세요.</div>"
+    escaped_url = html_escape(mobile_url) if 'html_escape' in globals() else mobile_url
+    st.markdown(f"""
+<div style='border:2px solid #15a36f;border-radius:20px;padding:16px;margin:8px 0 18px 0;background:linear-gradient(135deg,#072115,#0c2f21);box-shadow:0 8px 24px rgba(0,0,0,.18);'>
+  <div style='font-size:22px;font-weight:1000;color:#eafff1;margin-bottom:8px;'>📱 모바일 주소 바로 복사</div>
+  <div style='font-size:13px;color:#b8f7d0;margin-bottom:10px;'>휴대폰에서 일일이 치지 말고, 아래 주소를 복사하거나 QR코드로 여세요.</div>
+  <div style='display:flex;gap:14px;align-items:center;flex-wrap:wrap;'>
+    <div style='flex:1;min-width:280px;'>
+      <input id='maru_mobile_url_box' value='{escaped_url}' readonly onclick='this.select();document.execCommand("copy");' style='width:100%;box-sizing:border-box;font-size:19px;font-weight:900;padding:14px 12px;border-radius:14px;border:2px solid #4ade80;background:#ffffff;color:#06130b;' />
+      <button onclick='navigator.clipboard.writeText(document.getElementById("maru_mobile_url_box").value).then(()=>{{document.getElementById("maru_copy_msg").innerText="복사 완료";}}).catch(()=>{{document.getElementById("maru_mobile_url_box").select();document.execCommand("copy");document.getElementById("maru_copy_msg").innerText="주소 선택됨 · Ctrl+C 가능";}});' style='margin-top:10px;width:100%;font-size:18px;font-weight:1000;padding:12px;border-radius:14px;border:0;background:#22c55e;color:#04130a;cursor:pointer;'>모바일 주소 복사</button>
+      <div id='maru_copy_msg' style='font-size:13px;color:#d8f3dc;margin-top:7px;'>버튼이 안 눌리면 주소 칸을 눌러 전체 선택 후 Ctrl+C 하세요.</div>
+    </div>
+    <div style='text-align:center;'>
+      {qr_img or fallback_qr}
+      <div style='font-size:12px;color:#d8f3dc;margin-top:6px;font-weight:800;'>QR 스캔</div>
+    </div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
+    st.text_input("모바일 주소 텍스트 복사용", value=mobile_url, key="v24_mobile_url_copy_text", help="버튼이 안 먹으면 이 칸을 눌러 직접 복사하세요.")
 
 
 def render_metrics():
@@ -2435,7 +2485,7 @@ def render_clean_dashboard():
         show = best.copy()
         show["등급"] = show.apply(lambda r: recommendation_grade(r.to_dict()), axis=1)
         cols = [c for c in ["date","kickoff_kst","league","match","market_type","line_value","pick","confidence","risk","data_sufficiency","등급"] if c in show.columns]
-        st.dataframe(show[cols].rename(columns={**KOR_COLUMNS, "등급":"등급"}), width="stretch", hide_index=True)
+        st.dataframe(show[cols].rename(columns={**KOR_COLUMNS, "등급":"등급"}), use_container_width=True, hide_index=True)
 
     with st.expander("숨김: 자료 수집/저장 건수", expanded=False):
         status_rows = [
@@ -2448,28 +2498,28 @@ def render_clean_dashboard():
             {"항목":"예상 라인업", "건수":counts.get("standard_lineups",0)},
             {"항목":"뉴스/공지", "건수":counts.get("standard_news_flags",0)},
         ]
-        st.dataframe(pd.DataFrame(status_rows), width="stretch", hide_index=True)
+        st.dataframe(pd.DataFrame(status_rows), use_container_width=True, hide_index=True)
 
     miss = read_csv(OUTPUT_FILES["missing_data_report"])
     if not miss.empty:
         with st.expander("숨김: 부족자료 상세", expanded=False):
-            st.dataframe(ko_df(miss.tail(100)), width="stretch", hide_index=True)
+            st.dataframe(ko_df(miss.tail(100)), use_container_width=True, hide_index=True)
 
 def render_recent_outputs():
     st.subheader("🔎 고급 원문 확인")
     st.caption("평소에는 접어두고, 오류 찾을 때만 열어봅니다.")
     with st.expander("모바일 추천 원문", expanded=False):
         df = read_csv(OUTPUT_FILES["mobile_recommendations"])
-        st.dataframe(ko_df(df.tail(150)), width="stretch", hide_index=True) if not df.empty else st.info("모바일 추천 없음")
+        st.dataframe(ko_df(df.tail(150)), use_container_width=True, hide_index=True) if not df.empty else st.info("모바일 추천 없음")
     with st.expander("분석 점수 원문", expanded=False):
         df = read_csv(OUTPUT_FILES["analysis_scores"])
-        st.dataframe(ko_df(df.tail(150)), width="stretch", hide_index=True) if not df.empty else st.info("분석 점수 없음")
+        st.dataframe(ko_df(df.tail(150)), use_container_width=True, hide_index=True) if not df.empty else st.info("분석 점수 없음")
     with st.expander("허브 전송 로그", expanded=False):
         df = read_csv(OUTPUT_FILES["hub_send_logs"])
-        st.dataframe(df.tail(100), width="stretch", hide_index=True) if not df.empty else st.info("허브 로그 없음")
+        st.dataframe(df.tail(100), use_container_width=True, hide_index=True) if not df.empty else st.info("허브 로그 없음")
     with st.expander("부족자료 진단표", expanded=False):
         miss = read_csv(OUTPUT_FILES["missing_data_report"])
-        st.dataframe(ko_df(miss.tail(100)), width="stretch", hide_index=True) if not miss.empty else st.info("부족자료 진단표 없음")
+        st.dataframe(ko_df(miss.tail(100)), use_container_width=True, hide_index=True) if not miss.empty else st.info("부족자료 진단표 없음")
 
 def render_fixture_tab():
     st.subheader("📅 자동수집 일정 + 프로토 매칭")
@@ -2479,14 +2529,14 @@ def render_fixture_tab():
         if st.button("📡 오늘~7일 일정 자동수집", type="primary", use_container_width=True):
             fx, logs = collect_auto_schedule_for_matching(days=AUTO_MATCH_DAYS)
             st.success(f"자동수집 완료: 이번 실행 {len(fx)}건 · 매칭용 전체 {len(read_csv(SOURCE_FILES['source_livescore_schedule']))}건")
-            st.dataframe(logs.tail(80), width="stretch", hide_index=True) if not logs.empty else st.info("수집 로그 없음")
+            st.dataframe(logs.tail(80), use_container_width=True, hide_index=True) if not logs.empty else st.info("수집 로그 없음")
     with c2:
         if st.button("🔗 자동 매칭 실행", type="primary", use_container_width=True):
             proto = ensure_proto_ticket_from_markets()
             out = match_proto_with_livescore(proto_df=proto, live_df=read_csv(SOURCE_FILES["source_livescore_schedule"]), max_days=AUTO_MATCH_DAYS)
             matched = out[out.get("proto_livescore_status", pd.Series(dtype=str)).astype(str) == "MATCHED"] if not out.empty else pd.DataFrame()
             st.success(f"매칭 완료: MATCHED {len(matched)}건 / 전체 {len(out)}건")
-            st.dataframe(out.tail(200), width="stretch", hide_index=True) if not out.empty else st.warning("프로토 자료 또는 자동수집 일정이 부족합니다.")
+            st.dataframe(out.tail(200), use_container_width=True, hide_index=True) if not out.empty else st.warning("프로토 자료 또는 자동수집 일정이 부족합니다.")
     with c3:
         if st.button("🚀 자동수집+매칭+분석", type="primary", use_container_width=True):
             summary = auto_collect_and_match(days=AUTO_MATCH_DAYS)
@@ -2497,17 +2547,17 @@ def render_fixture_tab():
     with st.expander("① 자동수집 일정 자료", expanded=True):
         ldf = read_csv(SOURCE_FILES["source_livescore_schedule"])
         st.caption("앱이 자동으로 가져온 오늘~7일 일정입니다. 이 자료만으로는 구매용 체크표를 만들지 않고, 프로토 자료와 MATCHED 된 경기만 사용합니다.")
-        st.dataframe(ldf.tail(200), width="stretch", hide_index=True) if not ldf.empty else st.info("자동수집 일정 source 없음")
+        st.dataframe(ldf.tail(200), use_container_width=True, hide_index=True) if not ldf.empty else st.info("자동수집 일정 source 없음")
 
     with st.expander("② 프로토 자료", expanded=True):
         pdf = ensure_proto_ticket_from_markets()
         st.caption("기존 저장된 프로토 경기표/source_proto_markets 자료를 자동으로 매칭용으로 사용합니다. 프로토 자료가 없으면 구매용 MATCHED 경기는 0건입니다.")
-        st.dataframe(pdf.tail(200), width="stretch", hide_index=True) if pdf is not None and not pdf.empty else st.info("프로토 자료 없음")
+        st.dataframe(pdf.tail(200), use_container_width=True, hide_index=True) if pdf is not None and not pdf.empty else st.info("프로토 자료 없음")
 
     with st.expander("③ 매칭 결과", expanded=True):
         m = read_csv(SOURCE_FILES["matched_proto_livescore"])
         if not m.empty:
-            st.dataframe(m.tail(300), width="stretch", hide_index=True)
+            st.dataframe(m.tail(300), use_container_width=True, hide_index=True)
         else:
             st.info("아직 매칭 결과가 없습니다. 자동수집+매칭을 실행하세요.")
 
@@ -2529,7 +2579,7 @@ def render_fixture_tab():
     with st.expander("⑤ 기존 다음 예정 경기 참고자료", expanded=False):
         df = read_csv(SOURCE_FILES["source_livescore_fixtures"])
         st.caption("참고용입니다. MATCHED 없이는 오프라인 체크표 생성 대상이 아닙니다.")
-        st.dataframe(df.tail(100), width="stretch", hide_index=True) if not df.empty else st.info("참고 일정 source 없음")
+        st.dataframe(df.tail(100), use_container_width=True, hide_index=True) if not df.empty else st.info("참고 일정 source 없음")
 
 def render_data_input_tab():
     st.subheader("🧾 자료 입력")
@@ -2541,7 +2591,7 @@ def render_data_input_tab():
         n,total = append_csv(SOURCE_FILES["source_manual"], df, ["team"])
         st.success(f"manual 저장: 신규 {n}, 전체 {total}")
     df = read_csv(SOURCE_FILES["source_manual"])
-    st.dataframe(df.tail(100), width="stretch") if not df.empty else st.info("manual 자료 없음")
+    st.dataframe(df.tail(100), use_container_width=True) if not df.empty else st.info("manual 자료 없음")
 
 
 def render_hub_tab():
@@ -2568,7 +2618,7 @@ def render_hub_tab():
         except Exception:
             script_text = "google_apps_script_hub.gs 파일을 찾을 수 없습니다. ZIP 안 파일을 확인하세요."
         st.download_button("📜 Apps Script 코드 받기", script_text.encode("utf-8-sig"), "google_apps_script_hub.gs", "text/plain", key="gas_script_download")
-        st.dataframe(pd.DataFrame(status["rows"]), width="stretch")
+        st.dataframe(pd.DataFrame(status["rows"]), use_container_width=True)
 
     with st.expander("② 허브 Payload 구조 검사", expanded=True):
         payload = build_hub_payload("hub_payload_check")
@@ -2601,10 +2651,10 @@ def render_hub_tab():
                 st.warning("실제 전송 미완료/대기: " + msg)
 
     st.markdown("#### 최근 허브 전송 로그")
-    st.dataframe(read_csv(OUTPUT_FILES["hub_send_logs"]).tail(100), width="stretch")
+    st.dataframe(read_csv(OUTPUT_FILES["hub_send_logs"]).tail(100), use_container_width=True)
     st.markdown("#### Sportmonks 상태")
     st.json(sportmonks_secret_status())
-    st.dataframe(read_csv(OUTPUT_FILES["sportmonks_status"]).tail(100), width="stretch")
+    st.dataframe(read_csv(OUTPUT_FILES["sportmonks_status"]).tail(100), use_container_width=True)
 
 def render_diagnosis_tab():
     st.subheader("🧪 백엔드 진단")
@@ -2623,7 +2673,7 @@ def render_diagnosis_tab():
             st.download_button("📋 TEST_REPORT_RUNTIME 받기", open(path, "rb").read(), "TEST_REPORT_RUNTIME.md", "text/markdown", key="runtime_test_report_download")
     st.json(build_diagnosis())
     with st.expander("최근 실행 로그", expanded=True):
-        st.dataframe(read_csv(OUTPUT_FILES["run_logs"]).tail(200), width="stretch")
+        st.dataframe(read_csv(OUTPUT_FILES["run_logs"]).tail(200), use_container_width=True)
     with st.expander("Sportmonks API 진단", expanded=True):
         st.json(sportmonks_secret_status())
         if st.button("🐒 Sportmonks API 단독 테스트"):
@@ -2632,10 +2682,10 @@ def render_diagnosis_tab():
             if not sm_fx.empty:
                 append_csv(SOURCE_FILES["source_livescore_fixtures"], sm_fx, ["match_id"])
             st.success(f"Sportmonks 저장: 신규 {n}, 전체 {total}") if not sm_fx.empty else st.warning("Sportmonks 저장 0건 - 아래 상태 로그를 확인하세요")
-            st.dataframe(sm_logs, width="stretch")
-        st.dataframe(read_csv(OUTPUT_FILES["sportmonks_status"]).tail(200), width="stretch")
+            st.dataframe(sm_logs, use_container_width=True)
+        st.dataframe(read_csv(OUTPUT_FILES["sportmonks_status"]).tail(200), use_container_width=True)
     with st.expander("최근 오류 로그", expanded=False):
-        st.dataframe(read_csv(OUTPUT_FILES["error_logs"]).tail(200), width="stretch")
+        st.dataframe(read_csv(OUTPUT_FILES["error_logs"]).tail(200), use_container_width=True)
 
 
 
@@ -2720,7 +2770,7 @@ def render_livescore_board_tab():
     st.markdown("</div>", unsafe_allow_html=True)
     with st.expander("숨김: 전체 경기 예상/결과 원본", expanded=False):
         show_cols = [c for c in ["date","kickoff_kst","league","home_team","away_team","home_score","away_score","actual_result","pred_1x2","pred_handicap","pred_overunder","main_candidate","proto_status","missing_data"] if c in board.columns]
-        st.dataframe(board[show_cols], width="stretch", hide_index=True)
+        st.dataframe(board[show_cols], use_container_width=True, hide_index=True)
 
 def render_mobile_tab():
     st.subheader("📱 모바일 추천 — Galaxy S26 Ultra 압축 프로토 카드")
@@ -2816,15 +2866,15 @@ def render_mobile_tab():
                                 "추천": compact_pick_text(rd),
                                 "등급": recommendation_grade(rd),
                             })
-                        st.dataframe(pd.DataFrame(extra_rows), width="stretch", hide_index=True)
+                        st.dataframe(pd.DataFrame(extra_rows), use_container_width=True, hide_index=True)
                         detail = mdf.copy()
                         detail["등급"] = detail.apply(lambda r: recommendation_grade(r.to_dict()), axis=1)
                         cols = [c for c in ["market_type","line_value","pick","confidence","risk","data_sufficiency","등급","reasons","missing_data"] if c in detail.columns]
-                        st.dataframe(detail[cols].rename(columns={**KOR_COLUMNS, "등급":"등급"}), width="stretch", hide_index=True)
+                        st.dataframe(detail[cols].rename(columns={**KOR_COLUMNS, "등급":"등급"}), use_container_width=True, hide_index=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
     with st.expander("숨김: 모바일 추천 원본 전체", expanded=False):
-        st.dataframe(ko_df(df), width="stretch", hide_index=True)
+        st.dataframe(ko_df(df), use_container_width=True, hide_index=True)
 
 def get_app_mode():
     """URL ?mode=mobile 이면 모바일 전용 화면으로 완전 분기한다."""
@@ -3071,7 +3121,7 @@ def _toggle_button(label: str, state_key: str, *, button_type: str = "secondary"
     """Streamlit 버튼을 누르면 해당 패널이 열리고, 다시 누르면 닫히게 만든다."""
     if state_key not in st.session_state:
         st.session_state[state_key] = False
-    if st.button(label, key=f"btn_{state_key}", type=button_type, width="stretch"):
+    if st.button(label, key=f"btn_{state_key}", type=button_type, use_container_width=True):
         st.session_state[state_key] = not bool(st.session_state.get(state_key, False))
     return bool(st.session_state.get(state_key, False))
 
@@ -3162,11 +3212,11 @@ def render_mobile_hub_panel(match_id: str, home_ko: str, away_ko: str):
     st.write(f"**허브:** {diag.get('hub_url','OFF')} / **구글시트:** {diag.get('google_sheet_url','OFF')}")
     st.write(f"**경기 ID:** {match_id}")
     if sheet_url:
-        st.link_button("구글시트 열기", sheet_url, width="stretch")
+        st.link_button("구글시트 열기", sheet_url, use_container_width=True)
     else:
         st.info("GOOGLE_SHEET_URL Secret이 없으면 앱 안에서 구글시트 바로가기만 숨겨집니다.")
     if not logs.empty:
-        st.dataframe(logs, width="stretch", hide_index=True)
+        st.dataframe(logs, use_container_width=True, hide_index=True)
     else:
         st.caption("아직 허브 전송 로그가 없습니다. PC에서 전체실행 + 허브 전송 후 확인하세요.")
     st.markdown("</div>", unsafe_allow_html=True)
@@ -3193,6 +3243,7 @@ def main():
 
     st.title("⚽ 마루 스포츠 프로토 일정 허브")
     st.caption("프로토 자료 + 자동수집 일정 매칭 → 과거 빅데이터 분석 → 모바일 수동구매 체크 → 허브/구글시트 전송")
+    render_pc_mobile_address_panel()
     render_metrics()
     tabs = st.tabs(["대시보드", "전체 경기", "PC 모니터링", "일정표", "자료 입력", "모바일 추천", "허브 전송", "백엔드 진단"])
     with tabs[0]: render_full_run()
