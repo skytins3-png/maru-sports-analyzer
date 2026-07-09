@@ -1,0 +1,75 @@
+{
+  "all_ok": true,
+  "results": [
+    {
+      "name": "app.py 문법 검사",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "함수 중복 검사",
+      "ok": true,
+      "detail": "[]"
+    },
+    {
+      "name": "모바일 실제 버튼 코드 검사",
+      "ok": true,
+      "detail": "[]"
+    },
+    {
+      "name": "자동구매/자동결제 활성값 없음",
+      "ok": true,
+      "detail": "[]"
+    },
+    {
+      "name": "가상 데이터+실제 버튼 토글 테스트 1/10",
+      "ok": true,
+      "detail": " \"checklist_rows\": 6,\n  \"payload_summary\": {\n    \"app\": \"MARU SPORTS PROTO FIXTURE HUB\",\n    \"version\": \"v21-clickable-offline-ticket-mobile\",\n    \"type\": \"v21_test\",\n    \"analysis_rows\": 60,\n    \"mobile_rows\": 60,\n    \"source_fixtures\": 6,\n    \"standard_history\": 144,\n    \"hub_url\": \"OFF\",\n    \"google_sheet_url\": \"OFF\",\n    \"missing_data_rows\": 6\n  },\n  \"button_count\": 3,\n  \"checkbox_count\": 8\n}\n"
+    },
+    {
+      "name": "가상 데이터+실제 버튼 토글 테스트 2/10",
+      "ok": true,
+      "detail": " \"checklist_rows\": 6,\n  \"payload_summary\": {\n    \"app\": \"MARU SPORTS PROTO FIXTURE HUB\",\n    \"version\": \"v21-clickable-offline-ticket-mobile\",\n    \"type\": \"v21_test\",\n    \"analysis_rows\": 60,\n    \"mobile_rows\": 60,\n    \"source_fixtures\": 6,\n    \"standard_history\": 144,\n    \"hub_url\": \"OFF\",\n    \"google_sheet_url\": \"OFF\",\n    \"missing_data_rows\": 6\n  },\n  \"button_count\": 3,\n  \"checkbox_count\": 8\n}\n"
+    },
+    {
+      "name": "가상 데이터+실제 버튼 토글 테스트 3/10",
+      "ok": true,
+      "detail": " \"checklist_rows\": 6,\n  \"payload_summary\": {\n    \"app\": \"MARU SPORTS PROTO FIXTURE HUB\",\n    \"version\": \"v21-clickable-offline-ticket-mobile\",\n    \"type\": \"v21_test\",\n    \"analysis_rows\": 60,\n    \"mobile_rows\": 60,\n    \"source_fixtures\": 6,\n    \"standard_history\": 144,\n    \"hub_url\": \"OFF\",\n    \"google_sheet_url\": \"OFF\",\n    \"missing_data_rows\": 6\n  },\n  \"button_count\": 3,\n  \"checkbox_count\": 8\n}\n"
+    },
+    {
+      "name": "가상 데이터+실제 버튼 토글 테스트 4/10",
+      "ok": true,
+      "detail": " \"checklist_rows\": 6,\n  \"payload_summary\": {\n    \"app\": \"MARU SPORTS PROTO FIXTURE HUB\",\n    \"version\": \"v21-clickable-offline-ticket-mobile\",\n    \"type\": \"v21_test\",\n    \"analysis_rows\": 60,\n    \"mobile_rows\": 60,\n    \"source_fixtures\": 6,\n    \"standard_history\": 144,\n    \"hub_url\": \"OFF\",\n    \"google_sheet_url\": \"OFF\",\n    \"missing_data_rows\": 6\n  },\n  \"button_count\": 3,\n  \"checkbox_count\": 8\n}\n"
+    },
+    {
+      "name": "가상 데이터+실제 버튼 토글 테스트 5/10",
+      "ok": true,
+      "detail": " \"checklist_rows\": 6,\n  \"payload_summary\": {\n    \"app\": \"MARU SPORTS PROTO FIXTURE HUB\",\n    \"version\": \"v21-clickable-offline-ticket-mobile\",\n    \"type\": \"v21_test\",\n    \"analysis_rows\": 60,\n    \"mobile_rows\": 60,\n    \"source_fixtures\": 6,\n    \"standard_history\": 144,\n    \"hub_url\": \"OFF\",\n    \"google_sheet_url\": \"OFF\",\n    \"missing_data_rows\": 6\n  },\n  \"button_count\": 3,\n  \"checkbox_count\": 8\n}\n"
+    },
+    {
+      "name": "가상 데이터+실제 버튼 토글 테스트 6/10",
+      "ok": true,
+      "detail": " \"checklist_rows\": 6,\n  \"payload_summary\": {\n    \"app\": \"MARU SPORTS PROTO FIXTURE HUB\",\n    \"version\": \"v21-clickable-offline-ticket-mobile\",\n    \"type\": \"v21_test\",\n    \"analysis_rows\": 60,\n    \"mobile_rows\": 60,\n    \"source_fixtures\": 6,\n    \"standard_history\": 144,\n    \"hub_url\": \"OFF\",\n    \"google_sheet_url\": \"OFF\",\n    \"missing_data_rows\": 6\n  },\n  \"button_count\": 3,\n  \"checkbox_count\": 8\n}\n"
+    },
+    {
+      "name": "가상 데이터+실제 버튼 토글 테스트 7/10",
+      "ok": true,
+      "detail": " \"checklist_rows\": 6,\n  \"payload_summary\": {\n    \"app\": \"MARU SPORTS PROTO FIXTURE HUB\",\n    \"version\": \"v21-clickable-offline-ticket-mobile\",\n    \"type\": \"v21_test\",\n    \"analysis_rows\": 60,\n    \"mobile_rows\": 60,\n    \"source_fixtures\": 6,\n    \"standard_history\": 144,\n    \"hub_url\": \"OFF\",\n    \"google_sheet_url\": \"OFF\",\n    \"missing_data_rows\": 6\n  },\n  \"button_count\": 3,\n  \"checkbox_count\": 8\n}\n"
+    },
+    {
+      "name": "가상 데이터+실제 버튼 토글 테스트 8/10",
+      "ok": true,
+      "detail": " \"checklist_rows\": 6,\n  \"payload_summary\": {\n    \"app\": \"MARU SPORTS PROTO FIXTURE HUB\",\n    \"version\": \"v21-clickable-offline-ticket-mobile\",\n    \"type\": \"v21_test\",\n    \"analysis_rows\": 60,\n    \"mobile_rows\": 60,\n    \"source_fixtures\": 6,\n    \"standard_history\": 144,\n    \"hub_url\": \"OFF\",\n    \"google_sheet_url\": \"OFF\",\n    \"missing_data_rows\": 6\n  },\n  \"button_count\": 3,\n  \"checkbox_count\": 8\n}\n"
+    },
+    {
+      "name": "가상 데이터+실제 버튼 토글 테스트 9/10",
+      "ok": true,
+      "detail": " \"checklist_rows\": 6,\n  \"payload_summary\": {\n    \"app\": \"MARU SPORTS PROTO FIXTURE HUB\",\n    \"version\": \"v21-clickable-offline-ticket-mobile\",\n    \"type\": \"v21_test\",\n    \"analysis_rows\": 60,\n    \"mobile_rows\": 60,\n    \"source_fixtures\": 6,\n    \"standard_history\": 144,\n    \"hub_url\": \"OFF\",\n    \"google_sheet_url\": \"OFF\",\n    \"missing_data_rows\": 6\n  },\n  \"button_count\": 3,\n  \"checkbox_count\": 8\n}\n"
+    },
+    {
+      "name": "가상 데이터+실제 버튼 토글 테스트 10/10",
+      "ok": true,
+      "detail": " \"checklist_rows\": 6,\n  \"payload_summary\": {\n    \"app\": \"MARU SPORTS PROTO FIXTURE HUB\",\n    \"version\": \"v21-clickable-offline-ticket-mobile\",\n    \"type\": \"v21_test\",\n    \"analysis_rows\": 60,\n    \"mobile_rows\": 60,\n    \"source_fixtures\": 6,\n    \"standard_history\": 144,\n    \"hub_url\": \"OFF\",\n    \"google_sheet_url\": \"OFF\",\n    \"missing_data_rows\": 6\n  },\n  \"button_count\": 3,\n  \"checkbox_count\": 8\n}\n"
+    }
+  ]
+}

@@ -1,25 +1,28 @@
-# MARU SPORTS PROTO v19
+# MARU SPORTS PROTO FIXTURE HUB v21
 
-버전: `v19-ticket-matching-premium-mobile`
+## version
+v21-clickable-offline-ticket-mobile
 
-## 핵심 기준
-- 모바일에서 실제로 보기 편한 실사용 화면
-- PC는 확인/관리용
-- 기존 기능 제거 없음
-- 허브 저장 확인 가능
-- 전체 경기마다 예상/분석/결과 확인
-- 분석 이유는 숨김 처리 후 클릭하면 펼침
-- 실물 프로토 승부식 티켓과 대조하기 쉬운 모바일 구조
-- 오프라인 수동 구매 체크표 제공
-- 자동구매/자동결제 없음
+## 핵심 수정
+- 모바일 화면에서 이미지가 아니라 실제 Streamlit 버튼으로 작동합니다.
+- 경기 카드 아래에 실제 버튼 3개를 제공합니다.
+  - 🔍 분석보기
+  - 🧾 오프라인 체크
+  - ☁️ 허브확인
+- 버튼을 누르면 session_state 토글로 패널이 열리고 다시 누르면 닫힙니다.
+- 오프라인 수동구매 체크표는 체크박스 8개로 확인합니다.
+- 자동구매/자동결제는 없습니다.
+- 오늘/내일/전체 예정 날짜 필터는 실제 날짜 기준입니다.
+- 기존 허브/구글시트/분석/결과/로그 기능은 유지했습니다.
 
-## 모바일 주소
-`https://maru-sports-analyzer-lphmsfeyb47kgcrq4aevhs.streamlit.app/?mode=mobile`
+## 사용 흐름
+1. PC에서 전체 실행 + 허브 전송
+2. 모바일 URL 접속: `?mode=mobile`
+3. 경기 카드 확인
+4. [분석보기] 눌러 근거 확인
+5. [오프라인 체크] 눌러 실물 용지와 대조
+6. 판매점에서 직접 확인 후 수동 구매
+7. [허브확인] 눌러 저장/시트 상태 확인
 
-## 배포 순서
-1. ZIP 안 파일을 GitHub 루트에 덮어쓰기
-2. 필요 시 `google_apps_script_hub.gs`를 Apps Script에 덮어쓰기
-3. Apps Script 새 버전 배포: `v19 ticket matching premium mobile`
-4. Streamlit Reboot app
-5. PC에서 전체 실행 + 허브 저장
-6. 모바일 주소로 접속해 전체 경기/분석 이유/오프라인 체크표 확인
+## 검사
+자세한 내용은 TEST_REPORT.md 및 TEST_REPORT_JSON.json 참고.

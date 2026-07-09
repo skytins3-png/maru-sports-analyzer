@@ -14,7 +14,7 @@ import streamlit as st
 
 KST = timezone(timedelta(hours=9))
 APP_NAME = "MARU SPORTS PROTO FIXTURE HUB"
-APP_VERSION = "v19-ticket-matching-premium-mobile"
+APP_VERSION = "v21-clickable-offline-ticket-mobile"
 DATA_DIR = "data"
 LOG_DIR = "logs"
 PAYLOAD_DIR = "payloads"
@@ -1956,6 +1956,12 @@ def mobile_card_css():
   .proto-badge {font-size:.66rem; padding:2px 6px;}
   .grade {font-size:.66rem;}
 }
+
+.open-panel {border:1px solid rgba(35,255,122,.25); border-radius:18px; padding:12px 13px; margin:8px 0 14px 0; background:linear-gradient(180deg, rgba(10,24,18,.98), rgba(4,10,8,.98)); box-shadow:0 12px 28px rgba(0,0,0,.25);}
+.ticket-panel-real {border-color:rgba(255,205,120,.32);}
+.hub-panel-real {border-color:rgba(83,181,255,.32);}
+div[data-testid="stButton"] > button {border-radius:999px; font-weight:900; min-height:42px;}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -2576,11 +2582,32 @@ def render_mobile_premium_ticket_app():
     if not dates:
         st.warning("날짜 데이터가 없습니다.")
         return
-    # 모바일에서는 기본으로 전체 날짜를 보여주되, 칩으로 날짜 감각을 준다.
-    chip_html = "".join([f"<span class='date-chip {'on' if i==0 else ''}'>{html_escape(date_label_kr(d))}</span>" for i,d in enumerate(dates[:5])])
+    # v21: 오늘/내일/전체 예정 날짜를 실제 날짜 기준으로 분리하고, 버튼은 실제 클릭 동작으로 패널을 연다.
+    today = datetime.now(KST).date().isoformat()
+    tomorrow = (datetime.now(KST).date() + timedelta(days=1)).isoformat()
+    date_mode = st.radio("날짜 보기", ["오늘", "내일", "전체 예정"], horizontal=True, label_visibility="collapsed", key="v21_mobile_date_mode")
+    if date_mode == "오늘":
+        view = board[board["date"].astype(str) == today].copy()
+        if view.empty:
+            next_date = min([d for d in dates if d >= today], default="")
+            msg = f"오늘({date_label_kr(today)}) 등록된 경기가 없습니다."
+            if next_date:
+                msg += f" 다음 예정경기는 {date_label_kr(next_date)}부터 표시됩니다."
+            st.info(msg)
+    elif date_mode == "내일":
+        view = board[board["date"].astype(str) == tomorrow].copy()
+        if view.empty:
+            st.info(f"내일({date_label_kr(tomorrow)}) 등록된 경기가 없습니다.")
+    else:
+        view = board[board["date"].astype(str) >= today].copy()
+    if view.empty:
+        st.markdown("<div class='footer-note'>오늘/내일 경기가 없으면 전체 예정에서 다음 경기일을 확인하세요. 날짜가 8월로 보이면 현재 수집된 다음 예정경기가 8월이라는 뜻입니다.</div>", unsafe_allow_html=True)
+        return
+    view = view.sort_values(["date", "kickoff_kst", "league", "home_team"]).head(80)
+    active_dates = sorted([d for d in view.get("date", pd.Series(dtype=str)).unique() if clean(d)])
+    chip_html = "".join([f"<span class='date-chip {'on' if i==0 else ''}'>{html_escape(date_label_kr(d))}</span>" for i,d in enumerate(active_dates[:5])])
     st.markdown(f"<div class='date-row'>{chip_html}</div>", unsafe_allow_html=True)
-    st.markdown(f"<div class='match-count'>전체 경기 {len(board)}건 · 현재 표시 {min(len(board), 80)}건</div>", unsafe_allow_html=True)
-    view = board.head(80)
+    st.markdown(f"<div class='match-count'>{date_mode} · 전체 경기 {len(board)}건 · 현재 표시 {len(view)}건</div>", unsafe_allow_html=True)
     for date in sorted(view["date"].unique()):
         day = view[view["date"] == date]
         st.markdown(f"<div class='league-title'>📅 {html_escape(date_label_kr(date))} · 전체 경기 {len(day)}건</div>", unsafe_allow_html=True)
@@ -2619,41 +2646,118 @@ def render_mobile_premium_ticket_app():
   <div class='card-actions'><div class='action-mini'>분석 보기</div><div class='action-mini secondary'>오프라인 체크</div></div>
 </div>
 """, unsafe_allow_html=True)
-                render_mobile_ticket_expanders(mdf, "v19mobile", f"{home_ko}_{away_ko}")
+                render_mobile_clickable_controls(mdf, rd, "v21mobile", f"{home_ko}_{away_ko}")
     st.markdown("<div class='footer-note'>PC는 확인용 · 모바일은 실제 사용용 · 기존 기능 유지 · 허브 저장 확인 · 자동구매/자동결제 없음</div>", unsafe_allow_html=True)
 
 
-def render_mobile_ticket_expanders(mdf: pd.DataFrame, context: str, match_label: str):
-    # 모바일에서 더 짧게 보이도록 전용 펼침을 사용한다.
+def _toggle_button(label: str, state_key: str, *, button_type: str = "secondary") -> bool:
+    """Streamlit 버튼을 누르면 해당 패널이 열리고, 다시 누르면 닫히게 만든다."""
+    if state_key not in st.session_state:
+        st.session_state[state_key] = False
+    if st.button(label, key=f"btn_{state_key}", type=button_type, width="stretch"):
+        st.session_state[state_key] = not bool(st.session_state.get(state_key, False))
+    return bool(st.session_state.get(state_key, False))
+
+
+def render_mobile_clickable_controls(mdf: pd.DataFrame, board_row: Dict[str, Any], context: str, match_label: str):
+    """v21: 이미지가 아니라 실제 눌리는 모바일 버튼 3개를 제공한다."""
     if mdf is None or mdf.empty:
         return
     first = mdf.iloc[0].to_dict()
     main = best_match_candidate(mdf)
-    reasons = split_reasons(clean(main.get("reasons"))) if main else {}
     home, away = split_match_teams(first)
     home_ko, away_ko = ko_team(home), ko_team(away)
-    mid = clean(first.get("match_id")) or safe_key(context, match_label)
-    with st.expander(f"🔍 분석 이유 보기 — {home_ko} vs {away_ko}", expanded=False):
-        st.write(f"**AI 예상:** {compact_pick_text(main) if main else '분석대기'}")
-        st.write(f"**왜:** {why_summary_from_row(main) if main else '분석자료 부족'}")
-        st.write(f"- 최근폼: {reasons.get('recent_form', '자료 없음')}")
-        st.write(f"- 홈/원정: {reasons.get('home_away_form', '자료 없음')}")
-        st.write(f"- 상대전적: {reasons.get('h2h', '자료 없음')}")
-        st.write(f"- 부족자료: {clean(main.get('missing_data')) if main else '자료 없음'}")
-    with st.expander(f"🧾 실물 티켓 대조 / 오프라인 수동 체크 — {home_ko} vs {away_ko}", expanded=False):
-        st.markdown(_ticket_summary_box(), unsafe_allow_html=True)
-        checks = [
-            f"경기명 확인: {home_ko} vs {away_ko}",
-            f"시간 확인: {clean(first.get('kickoff_kst')) or '-'}",
-            "승무패 번호/배당 확인",
-            "핸디캡 기준점/배당 확인",
-            "언더/오버 기준점/배당 확인",
-            "라이브스코어 상태 확인",
-            "내가 직접 마킹 완료",
-        ]
-        for idx, item in enumerate(checks):
-            st.checkbox(item, key=f"v19_mobile_ticket_{safe_key(mid, idx, item)}")
-        st.warning("자동구매/자동결제 없음 · 오프라인 판매점에서 직접 확인 후 수동 구매")
+    mid = clean(first.get("match_id")) or clean(board_row.get("match_id")) or safe_key(context, match_label)
+    base_key = safe_key(context, mid, home_ko, away_ko)
+
+    b1, b2, b3 = st.columns(3)
+    with b1:
+        show_analysis = _toggle_button("🔍 분석보기", f"analysis_{base_key}", button_type="primary")
+    with b2:
+        show_ticket = _toggle_button("🧾 오프라인 체크", f"ticket_{base_key}")
+    with b3:
+        show_hub = _toggle_button("☁️ 허브확인", f"hub_{base_key}")
+
+    if show_analysis:
+        render_mobile_analysis_panel(mdf, main, home_ko, away_ko)
+    if show_ticket:
+        render_mobile_offline_ticket_panel(mdf, board_row, main, home_ko, away_ko, base_key)
+    if show_hub:
+        render_mobile_hub_panel(mid, home_ko, away_ko)
+
+
+def render_mobile_analysis_panel(mdf: pd.DataFrame, main: Dict[str, Any], home_ko: str, away_ko: str):
+    reasons = split_reasons(clean(main.get("reasons"))) if main else {}
+    st.markdown("<div class='open-panel'>", unsafe_allow_html=True)
+    st.markdown(f"### 🔍 분석 이유 — {html_escape(home_ko)} vs {html_escape(away_ko)}")
+    st.write(f"**AI 예상:** {compact_pick_text(main) if main else '분석대기'}")
+    st.write(f"**핵심 판단:** {why_summary_from_row(main) if main else '분석자료 부족'}")
+    st.write(f"- 최근폼: {reasons.get('recent_form', '자료 없음')}")
+    st.write(f"- 홈/원정 성적: {reasons.get('home_away_form', '자료 없음')}")
+    st.write(f"- 상대전적: {reasons.get('h2h', '자료 없음')}")
+    st.write("- 감독/전술: 수집자료가 있으면 반영, 없으면 자료확인 표시")
+    st.write("- 부상/결장: 수집자료가 있으면 반영, 없으면 자료확인 표시")
+    st.write("- 예상 라인업: 수집자료가 있으면 반영, 없으면 자료확인 표시")
+    st.write(f"- 부족자료: {clean(main.get('missing_data')) if main else '자료 없음'}")
+    st.caption("분석 이유는 기본 숨김이며, [분석보기] 버튼을 눌렀을 때만 펼쳐집니다.")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+def render_mobile_offline_ticket_panel(mdf: pd.DataFrame, board_row: Dict[str, Any], main: Dict[str, Any], home_ko: str, away_ko: str, base_key: str):
+    first = mdf.iloc[0].to_dict()
+    one = pick_market_row(mdf, "승무패")
+    hcap = pick_market_row(mdf, "핸디캡")
+    uo = pick_market_row(mdf, "언더오버")
+    st.markdown("<div class='open-panel ticket-panel-real'>", unsafe_allow_html=True)
+    st.markdown(f"### 🧾 실물 티켓 대조 / 오프라인 수동 체크")
+    st.markdown(_ticket_summary_box(), unsafe_allow_html=True)
+    st.write(f"**경기:** {home_ko} vs {away_ko}")
+    st.write(f"**시간:** {clean(first.get('date')) or clean(board_row.get('date'))} {clean(first.get('kickoff_kst')) or clean(board_row.get('kickoff_kst'))}")
+    st.write(f"**AI 후보:** {compact_pick_text(main) if main else '분석대기'}")
+    st.write(f"**승무패:** {compact_pick_text(one) if one else '분석대기'}")
+    st.write(f"**핸디캡:** {compact_pick_text(hcap) if hcap else '분석대기'}")
+    st.write(f"**언더/오버:** {compact_pick_text(uo) if uo else '분석대기'}")
+    checks = [
+        f"경기명 확인: {home_ko} vs {away_ko}",
+        f"시간 확인: {clean(first.get('kickoff_kst')) or clean(board_row.get('kickoff_kst')) or '-'}",
+        "승무패 번호/배당 확인",
+        "핸디캡 기준점/배당 확인",
+        "언더/오버 기준점/배당 확인",
+        "라이브스코어 상태 확인",
+        "실물 용지와 앱 추천 대조 완료",
+        "내가 직접 마킹 완료",
+    ]
+    st.markdown("#### ✅ 판매점 가기 전 체크")
+    for idx, item in enumerate(checks):
+        st.checkbox(item, key=f"v21_offline_ticket_{safe_key(base_key, idx, item)}")
+    st.warning("자동구매/자동결제 기능 없음 · 앱은 참고용 분석/대조/체크표만 제공 · 오프라인 판매점에서 직접 확인 후 수동 구매")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+def render_mobile_hub_panel(match_id: str, home_ko: str, away_ko: str):
+    diag = build_diagnosis()
+    logs = read_csv(OUTPUT_FILES["hub_send_logs"]).tail(5)
+    sheet_url = get_google_sheet_url()
+    st.markdown("<div class='open-panel hub-panel-real'>", unsafe_allow_html=True)
+    st.markdown(f"### ☁️ 허브 저장 확인 — {html_escape(home_ko)} vs {html_escape(away_ko)}")
+    st.write(f"**허브:** {diag.get('hub_url','OFF')} / **구글시트:** {diag.get('google_sheet_url','OFF')}")
+    st.write(f"**경기 ID:** {match_id}")
+    if sheet_url:
+        st.link_button("구글시트 열기", sheet_url, width="stretch")
+    else:
+        st.info("GOOGLE_SHEET_URL Secret이 없으면 앱 안에서 구글시트 바로가기만 숨겨집니다.")
+    if not logs.empty:
+        st.dataframe(logs, width="stretch", hide_index=True)
+    else:
+        st.caption("아직 허브 전송 로그가 없습니다. PC에서 전체실행 + 허브 전송 후 확인하세요.")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+def render_mobile_ticket_expanders(mdf: pd.DataFrame, context: str, match_label: str):
+    """이전 호환용: v21에서는 버튼형 컨트롤을 기본 사용한다."""
+    if mdf is None or mdf.empty:
+        return
+    render_mobile_clickable_controls(mdf, {}, context, match_label)
 
 
 def render_mobile_only_app():
