@@ -1,6 +1,7 @@
 import os
 import json
 import zipfile
+import hashlib
 from pathlib import Path
 from io import StringIO, BytesIO
 from datetime import datetime, timezone, timedelta
@@ -13,7 +14,7 @@ import streamlit as st
 
 KST = timezone(timedelta(hours=9))
 APP_NAME = "MARU SPORTS PROTO FIXTURE HUB"
-APP_VERSION = "v13-sportmonks-diagnosis"
+APP_VERSION = "v17-analysis-offline-checklist"
 DATA_DIR = "data"
 LOG_DIR = "logs"
 PAYLOAD_DIR = "payloads"
@@ -59,6 +60,9 @@ OUTPUT_FILES = {
     "news_status": f"{DATA_DIR}/news_status.csv",
     "proto_market_status": f"{DATA_DIR}/proto_market_status.csv",
     "sportmonks_status": f"{DATA_DIR}/sportmonks_status.csv",
+    "fixture_prediction_results": f"{DATA_DIR}/fixture_prediction_results.csv",
+    "prediction_explain": f"{DATA_DIR}/prediction_explain.csv",
+    "offline_checklist": f"{DATA_DIR}/offline_checklist.csv",
     "hub_payload_latest": f"{PAYLOAD_DIR}/hub_payload_latest.json",
     "hub_payload_queue": f"{PAYLOAD_DIR}/hub_payload_queue.jsonl",
 }
@@ -110,6 +114,9 @@ EMPTY_SCHEMAS = {
     "news_status": ["created_at", "match_id", "match", "home_team", "away_team", "home_news_status", "away_news_status"],
     "proto_market_status": ["created_at", "match_id", "match", "market_rows", "real_proto_rows", "template_rows", "status"],
     "sportmonks_status": ["time", "provider", "enabled", "token_detected", "token_preview", "url_template", "safe_final_url", "http_status", "status", "response_data_count", "parsed_rows", "participants_parsed", "message", "response_preview"],
+    "fixture_prediction_results": ["created_at", "match_id", "date", "kickoff_kst", "league", "home_team", "away_team", "match", "match_status", "home_score", "away_score", "actual_result", "pred_1x2", "pred_1x2_conf", "pred_1x2_risk", "pred_handicap", "pred_overunder", "pred_doublechance", "main_candidate", "main_confidence", "main_risk", "proto_status", "missing_data"],
+    "prediction_explain": ["created_at", "match_id", "date", "kickoff_kst", "league", "home_team", "away_team", "home_team_ko", "away_team_ko", "main_prediction", "confidence", "risk", "recent_form", "home_away_form", "h2h", "why_summary", "missing_data", "final_note"],
+    "offline_checklist": ["created_at", "match_id", "date", "kickoff_kst", "league", "home_team_ko", "away_team_ko", "main_prediction", "check_match", "check_time", "check_1x2", "check_handicap", "check_overunder", "check_odds_change", "check_livescore", "check_manual_marking", "auto_buy", "auto_payment"],
 }
 
 
@@ -1115,6 +1122,18 @@ def analyze_market(fixture: Dict[str, Any], market: Dict[str, Any], history: pd.
         "created_at": now_text(), "match_id": clean(fixture.get("match_id")), "date": clean(fixture.get("date")), "kickoff_kst": clean(fixture.get("kickoff_kst")),
         "sport": clean(fixture.get("sport")), "league": league, "home_team": home, "away_team": away,
         "match": f"{home} vs {away}", "market_type": market_type, "line_value": line_value,
+        "option_a": clean(market.get("option_a")), "option_b": clean(market.get("option_b")), "option_c": clean(market.get("option_c")),
+        "home_odds": clean(market.get("home_odds") or market.get("odds_home") or market.get("home_win_odds")),
+        "draw_odds": clean(market.get("draw_odds") or market.get("odds_draw")),
+        "away_odds": clean(market.get("away_odds") or market.get("odds_away") or market.get("away_win_odds")),
+        "option_a_odds": clean(market.get("option_a_odds") or market.get("a_odds")),
+        "option_b_odds": clean(market.get("option_b_odds") or market.get("b_odds")),
+        "option_c_odds": clean(market.get("option_c_odds") or market.get("c_odds")),
+        "handicap_home_odds": clean(market.get("handicap_home_odds") or market.get("home_handicap_odds")),
+        "handicap_away_odds": clean(market.get("handicap_away_odds") or market.get("away_handicap_odds")),
+        "under_odds": clean(market.get("under_odds") or market.get("odds_under")),
+        "over_odds": clean(market.get("over_odds") or market.get("odds_over")),
+        "source": clean(market.get("source")), "status": clean(market.get("status")),
         "pick": pick, "confidence": conf, "risk": risk, "data_sufficiency": min(100, data_score),
         "missing_data": " / ".join(missing), "reasons": " / ".join(reasons),
         "home_form": home_form["form_text"], "away_form": away_form["form_text"],
@@ -1137,11 +1156,20 @@ def run_standardize_and_analyze() -> Tuple[pd.DataFrame, pd.DataFrame, Dict[str,
             for _, m in ms.iterrows():
                 results.append(analyze_market(f.to_dict(), m.to_dict(), history, tf, ha, hh, injuries, lineups, coaches, transfers, news))
     analysis = pd.DataFrame(results)
-    mobile = analysis[[c for c in ["created_at", "match_id", "match", "league", "date", "kickoff_kst", "market_type", "line_value", "pick", "confidence", "risk", "data_sufficiency", "missing_data", "reasons", "auto_buy", "auto_payment"] if c in analysis.columns]].copy() if not analysis.empty else pd.DataFrame()
+    mobile_cols = [
+        "created_at", "match_id", "match", "league", "date", "kickoff_kst", "home_team", "away_team",
+        "market_type", "line_value", "option_a", "option_b", "option_c",
+        "home_odds", "draw_odds", "away_odds", "option_a_odds", "option_b_odds", "option_c_odds",
+        "handicap_home_odds", "handicap_away_odds", "under_odds", "over_odds",
+        "source", "status", "pick", "confidence", "risk", "data_sufficiency", "missing_data", "reasons", "auto_buy", "auto_payment"
+    ]
+    mobile = analysis[[c for c in mobile_cols if c in analysis.columns]].copy() if not analysis.empty else pd.DataFrame()
     write_csv(OUTPUT_FILES["analysis_scores"], analysis)
     write_csv(OUTPUT_FILES["mobile_recommendations"], mobile)
+    fixture_board = build_fixture_prediction_results(fixtures, analysis)
+    explain, checklist = build_prediction_explain_tables(fixtures, analysis)
     diagnosis = build_diagnosis()
-    meta = {"fixtures_msg": fmsg, "history_msg": hmsg, "analysis_rows": len(analysis), "mobile_rows": len(mobile), "diagnosis": diagnosis, "missing_data_rows": len(read_csv(OUTPUT_FILES["missing_data_report"]))}
+    meta = {"fixtures_msg": fmsg, "history_msg": hmsg, "analysis_rows": len(analysis), "mobile_rows": len(mobile), "fixture_board_rows": len(fixture_board), "prediction_explain_rows": len(explain), "offline_checklist_rows": len(checklist), "diagnosis": diagnosis, "missing_data_rows": len(read_csv(OUTPUT_FILES["missing_data_report"]))}
     log_run("standardize_analyze", "ok", f"analysis={len(analysis)}, mobile={len(mobile)}", meta)
     return analysis, mobile, meta
 
@@ -1178,6 +1206,9 @@ def build_hub_payload(kind: str = "full_pipeline") -> Dict[str, Any]:
         "diagnosis": build_diagnosis(),
         "analysis_scores": read_csv(OUTPUT_FILES["analysis_scores"]).tail(300).to_dict("records"),
         "mobile_recommendations": read_csv(OUTPUT_FILES["mobile_recommendations"]).tail(300).to_dict("records"),
+        "fixture_prediction_results": read_csv(OUTPUT_FILES["fixture_prediction_results"]).tail(500).to_dict("records"),
+        "prediction_explain": read_csv(OUTPUT_FILES["prediction_explain"]).tail(500).to_dict("records"),
+        "offline_checklist": read_csv(OUTPUT_FILES["offline_checklist"]).tail(500).to_dict("records"),
         "hub_send_logs": read_csv(OUTPUT_FILES["hub_send_logs"]).tail(50).to_dict("records"),
         "missing_data_report": read_csv(OUTPUT_FILES["missing_data_report"]).tail(300).to_dict("records"),
         "coach_status": read_csv(OUTPUT_FILES["coach_status"]).tail(300).to_dict("records"),
@@ -1285,6 +1316,23 @@ def make_status_report() -> str:
         lines.append("Sportmonks 상태 로그 없음")
     else:
         lines.append(sm_status.to_csv(index=False))
+    lines += ["", "## 분석보기/오프라인 체크표"]
+    exp = read_csv(OUTPUT_FILES["prediction_explain"]).tail(30)
+    if exp.empty:
+        lines.append("분석보기 자료 없음")
+    else:
+        lines.append(exp.to_csv(index=False))
+    chk = read_csv(OUTPUT_FILES["offline_checklist"]).tail(30)
+    if chk.empty:
+        lines.append("오프라인 체크표 없음")
+    else:
+        lines.append(chk.to_csv(index=False))
+    lines += ["", "## 라이브스코어식 전체 경기 예상/결과"]
+    board = read_csv(OUTPUT_FILES["fixture_prediction_results"]).tail(30)
+    if board.empty:
+        lines.append("전체 경기 예상/결과표 없음")
+    else:
+        lines.append(board.to_csv(index=False))
     lines += ["", "## 최근 모바일 추천"]
     mob = read_csv(OUTPUT_FILES["mobile_recommendations"]).tail(20)
     if mob.empty:
@@ -1363,6 +1411,554 @@ def virtual_backend_test() -> Tuple[bool, str, Dict[str, Any]]:
     return ok, "가상 백엔드 전체 테스트 통과" if ok else "가상 백엔드 테스트 실패", details
 
 
+
+# =========================
+# v14 화면 정리 / 모바일 추천 헬퍼
+# =========================
+KOR_COLUMNS = {
+    "created_at": "생성시간", "match_id": "경기ID", "match": "경기", "league": "리그", "date": "경기일",
+    "kickoff_kst": "시간", "market_type": "승부식", "line_value": "기준점", "pick": "추천",
+    "confidence": "신뢰도", "risk": "위험도", "data_sufficiency": "자료충분도", "missing_data": "부족자료",
+    "reasons": "추천근거", "auto_buy": "자동구매", "auto_payment": "자동결제",
+    "home_team": "홈팀", "away_team": "원정팀", "sport": "종목", "status": "상태", "source": "자료출처",
+}
+
+MARKET_ORDER = ["승무패", "핸디캡", "언더오버", "전반", "더블찬스", "SUM", "승패/승5패", "한경기조합", "한경기구매", "기타"]
+
+
+def ko_df(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+    out = df.copy()
+    cols = [c for c in ["date", "kickoff_kst", "league", "match", "market_type", "line_value", "pick", "confidence", "risk", "data_sufficiency", "missing_data", "reasons", "auto_buy", "auto_payment"] if c in out.columns]
+    if cols:
+        out = out[cols]
+    return out.rename(columns={c: KOR_COLUMNS.get(c, c) for c in out.columns})
+
+
+def num_value(v, default=0) -> int:
+    try:
+        return int(float(clean(v)))
+    except Exception:
+        return default
+
+
+def recommendation_grade(row: Dict[str, Any]) -> str:
+    pick = clean(row.get("pick"))
+    risk = clean(row.get("risk"))
+    conf = num_value(row.get("confidence"), 0)
+    suff = num_value(row.get("data_sufficiency"), 0)
+    if pick in {"", "분석불가"}:
+        return "제외"
+    if "자료확인" in pick:
+        return "C-자료확인"
+    # 실제 프로토/부상/라인업이 없으면 강추천 대신 참고용으로 묶는다.
+    if conf >= 75 and risk == "낮음":
+        return "A-참고용"
+    if conf >= 65 and risk in {"낮음", "중간"}:
+        return "B-참고용"
+    if suff < 50:
+        return "C-자료부족"
+    return "C-주의"
+
+
+def sort_recommendations(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+    out = df.copy().fillna("")
+    out["_confidence"] = out.get("confidence", "0").apply(lambda x: num_value(x, 0))
+    out["_sufficiency"] = out.get("data_sufficiency", "0").apply(lambda x: num_value(x, 0))
+    out["_risk_rank"] = out.get("risk", "").map({"낮음": 0, "중간": 1, "높음": 2}).fillna(3)
+    out["_pick_rank"] = out.get("pick", "").apply(lambda x: 9 if clean(x) in {"분석불가", "자료확인 필요", ""} else 0)
+    out["_market_rank"] = out.get("market_type", "").apply(lambda x: MARKET_ORDER.index(x) if x in MARKET_ORDER else 99)
+    out = out.sort_values(["date", "_pick_rank", "_risk_rank", "_confidence", "_sufficiency", "_market_rank"], ascending=[True, True, True, False, False, True])
+    return out.drop(columns=[c for c in out.columns if c.startswith("_")], errors="ignore")
+
+
+def best_proto_candidates(df: pd.DataFrame, limit: int = 12) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+    out = sort_recommendations(df)
+    if out.empty:
+        return out
+    out = out[~out.get("pick", "").isin(["분석불가", "자료확인 필요", ""])]
+    out = out[out.get("risk", "") != "높음"]
+    out["grade"] = out.apply(lambda r: recommendation_grade(r.to_dict()), axis=1)
+    return out.head(limit)
+
+
+def market_summary_for_match(match_df: pd.DataFrame) -> List[Dict[str, str]]:
+    rows = []
+    if match_df is None or match_df.empty:
+        return rows
+    for market in MARKET_ORDER:
+        part = match_df[match_df.get("market_type", "") == market]
+        if part.empty:
+            continue
+        r = part.iloc[0]
+        rows.append({
+            "승부식": clean(r.get("market_type")),
+            "기준점/핸디": clean(r.get("line_value")) or "-",
+            "추천": clean(r.get("pick")) or "-",
+            "신뢰도": clean(r.get("confidence")) or "0",
+            "위험도": clean(r.get("risk")) or "-",
+            "등급": recommendation_grade(r.to_dict()),
+        })
+    return rows
+
+
+
+
+def actual_result_text(row: Dict[str, Any]) -> str:
+    hs = clean(row.get("home_score"))
+    aw = clean(row.get("away_score"))
+    if hs == "" or aw == "":
+        return "예정"
+    try:
+        h = int(float(hs)); a = int(float(aw))
+    except Exception:
+        return "결과확인"
+    if h > a:
+        return "홈승"
+    if h < a:
+        return "원정승"
+    return "무승부"
+
+
+def normalize_match_key(row: Dict[str, Any]) -> str:
+    mid = clean(row.get("match_id"))
+    if mid:
+        return mid
+    return f"{normalize_date(row.get('date'))}_{clean(row.get('home_team'))}_{clean(row.get('away_team'))}".replace(" ", "_")
+
+
+def pick_market_row(match_df: pd.DataFrame, market: str) -> Dict[str, Any]:
+    if match_df is None or match_df.empty or "market_type" not in match_df.columns:
+        return {}
+    part = match_df[match_df["market_type"].astype(str) == market].copy()
+    if part.empty:
+        return {}
+    # 분석불가보다는 실제 후보/자료확인 순으로 하나만 고른다.
+    # 일부 테스트/외부 원본에는 date 컬럼이 없을 수 있어 정렬 필드를 보강한다.
+    for c in ["date", "kickoff_kst", "data_sufficiency", "confidence", "risk", "pick"]:
+        if c not in part.columns:
+            part[c] = ""
+    part = sort_recommendations(part)
+    return part.iloc[0].to_dict()
+
+
+def best_match_candidate(match_df: pd.DataFrame) -> Dict[str, Any]:
+    if match_df is None or match_df.empty:
+        return {}
+    cand = best_proto_candidates(match_df, 1)
+    if not cand.empty:
+        return cand.iloc[0].to_dict()
+    # 후보가 하나도 없으면 1X2 또는 첫 줄을 표시한다.
+    r = pick_market_row(match_df, "승무패")
+    if r:
+        return r
+    return match_df.iloc[0].to_dict()
+
+
+def build_fixture_prediction_results(fixtures: pd.DataFrame = None, analysis: pd.DataFrame = None) -> pd.DataFrame:
+    """라이브스코어식 전체 경기판: 매일 전체 경기의 예상과 실제 결과를 한 줄로 만든다."""
+    if fixtures is None:
+        src = read_csv(SOURCE_FILES["source_livescore_fixtures"])
+        std = read_csv(STANDARD_FILES["standard_upcoming_fixtures"])
+        fixtures = pd.concat([src, std], ignore_index=True) if not src.empty or not std.empty else pd.DataFrame()
+    if analysis is None:
+        analysis = read_csv(OUTPUT_FILES["analysis_scores"])
+    if fixtures is None or fixtures.empty:
+        write_csv(OUTPUT_FILES["fixture_prediction_results"], pd.DataFrame())
+        return pd.DataFrame()
+
+    fixtures = fixtures.copy().fillna("")
+    # 필요한 필드가 없는 소스도 안전하게 보정
+    for c in ["match_id", "date", "kickoff_kst", "league", "home_team", "away_team", "status", "home_score", "away_score", "source"]:
+        if c not in fixtures.columns:
+            fixtures[c] = ""
+    fixtures["match_id"] = fixtures.apply(lambda r: normalize_match_key(r.to_dict()), axis=1)
+    fixtures["date"] = fixtures["date"].apply(normalize_date)
+    fixtures = fixtures[(fixtures["date"].astype(str) != "") & (fixtures["home_team"].astype(str) != "") & (fixtures["away_team"].astype(str) != "")]
+    if fixtures.empty:
+        write_csv(OUTPUT_FILES["fixture_prediction_results"], pd.DataFrame())
+        return pd.DataFrame()
+    fixtures = fixtures.drop_duplicates(subset=["match_id"], keep="last")
+    rows = []
+    analysis = analysis.copy().fillna("") if analysis is not None and not analysis.empty else pd.DataFrame()
+    for _, f in fixtures.sort_values(["date", "kickoff_kst", "league", "home_team"]).iterrows():
+        fd = f.to_dict()
+        mid = clean(fd.get("match_id"))
+        mdf = analysis[analysis.get("match_id", pd.Series(dtype=str)).astype(str) == mid] if not analysis.empty and "match_id" in analysis.columns else pd.DataFrame()
+        one = pick_market_row(mdf, "승무패")
+        hcap = pick_market_row(mdf, "핸디캡")
+        uo = pick_market_row(mdf, "언더오버")
+        dc = pick_market_row(mdf, "더블찬스")
+        main = best_match_candidate(mdf)
+        real_any = False
+        if not mdf.empty:
+            real_any = any(is_real_proto_row(r.to_dict()) for _, r in mdf.iterrows())
+        rows.append({
+            "created_at": now_text(),
+            "match_id": mid,
+            "date": normalize_date(fd.get("date")),
+            "kickoff_kst": clean(fd.get("kickoff_kst")),
+            "league": clean(fd.get("league")),
+            "home_team": clean(fd.get("home_team")),
+            "away_team": clean(fd.get("away_team")),
+            "match": f"{clean(fd.get('home_team'))} vs {clean(fd.get('away_team'))}",
+            "match_status": clean(fd.get("status")) or ("FT" if clean(fd.get("home_score")) or clean(fd.get("away_score")) else "SCHEDULED"),
+            "home_score": clean(fd.get("home_score")),
+            "away_score": clean(fd.get("away_score")),
+            "actual_result": actual_result_text(fd),
+            "pred_1x2": compact_pick_text(one) if one else "분석대기",
+            "pred_1x2_conf": clean(one.get("confidence")) if one else "0",
+            "pred_1x2_risk": clean(one.get("risk")) if one else "-",
+            "pred_handicap": compact_pick_text(hcap) if hcap else "-",
+            "pred_overunder": compact_pick_text(uo) if uo else "-",
+            "pred_doublechance": compact_pick_text(dc) if dc else "-",
+            "main_candidate": compact_pick_text(main) if main else "분석대기",
+            "main_confidence": clean(main.get("confidence")) if main else "0",
+            "main_risk": clean(main.get("risk")) if main else "-",
+            "proto_status": "실제배당" if real_any else "배당미연동",
+            "missing_data": clean(main.get("missing_data")) if main else "분석자료 없음",
+        })
+    out = pd.DataFrame(rows)
+    write_csv(OUTPUT_FILES["fixture_prediction_results"], out)
+    return out
+
+def compact_status_text(diag: Dict[str, Any]) -> str:
+    counts = diag.get("counts", {}) if isinstance(diag, dict) else {}
+    return (
+        f"추천 {counts.get('mobile_recommendations',0)}건 · "
+        f"분석 {counts.get('analysis_scores',0)}건 · "
+        f"허브 {diag.get('hub_url','OFF')} · "
+        f"시트 {diag.get('google_sheet_url','OFF')} · "
+        f"오류 {counts.get('error_logs',0)}건"
+    )
+
+
+# =========================
+# v15 Galaxy S26 Ultra compact mobile card helpers
+# =========================
+KOR_WEEKDAYS = ["월", "화", "수", "목", "금", "토", "일"]
+
+
+def date_label_kr(date_text: str) -> str:
+    d = clean(date_text)
+    try:
+        dt = datetime.strptime(d[:10], "%Y-%m-%d")
+        return dt.strftime("%m/%d") + f" {KOR_WEEKDAYS[dt.weekday()]}"
+    except Exception:
+        return d
+
+
+def first_value(row: Dict[str, Any], keys: List[str]) -> str:
+    for k in keys:
+        v = clean(row.get(k))
+        if v:
+            return v
+    return ""
+
+
+def odds_or_dash(row: Dict[str, Any], keys: List[str]) -> str:
+    return first_value(row, keys) or "-"
+
+
+def is_real_proto_row(row: Dict[str, Any]) -> bool:
+    src = clean(row.get("source"))
+    status = clean(row.get("status"))
+    joined = f"{src} {status}".lower()
+    return bool(joined) and not any(x in joined for x in ["template", "not_real", "market_template"])
+
+
+def short_market_code(market: str, line: str) -> str:
+    m = clean(market)
+    lv = clean(line)
+    if m == "승무패":
+        return "1X2"
+    if m == "핸디캡":
+        return f"H{lv}" if lv else "H"
+    if m == "언더오버":
+        return f"U/O{lv}" if lv else "U/O"
+    if m == "더블찬스":
+        return "DC"
+    if m == "전반":
+        return "전반"
+    if m == "SUM":
+        return "SUM"
+    if m == "승패/승5패":
+        return "승5패"
+    if m == "한경기조합":
+        return "조합"
+    if m == "한경기구매":
+        return "단일"
+    return m[:6] if m else "-"
+
+
+def compact_pick_text(row: Dict[str, Any]) -> str:
+    pick = clean(row.get("pick")) or "-"
+    pick = pick.replace(" 우세", "").replace(" 안정", "").replace("자료확인 필요", "확인")
+    pick = pick.replace("홈 핸디", "홈H").replace("원정 핸디", "원정H")
+    pick = pick.replace("홈/무", "홈무").replace("무/원정", "무원")
+    conf = clean(row.get("confidence")) or "0"
+    risk = clean(row.get("risk")) or "-"
+    risk_short = {"낮음":"낮", "중간":"중", "높음":"높"}.get(risk, risk)
+    return f"{pick} {conf} {risk_short}"
+
+
+def compact_odds_text(row: Dict[str, Any]) -> str:
+    m = clean(row.get("market_type"))
+    if m == "승무패":
+        h = odds_or_dash(row, ["home_odds", "option_a_odds", "odds_home", "home_win_odds"])
+        d = odds_or_dash(row, ["draw_odds", "option_b_odds", "odds_draw"])
+        a = odds_or_dash(row, ["away_odds", "option_c_odds", "odds_away", "away_win_odds"])
+        return f"{h} / {d} / {a}"
+    if m == "핸디캡":
+        h = odds_or_dash(row, ["handicap_home_odds", "home_handicap_odds", "option_a_odds"])
+        a = odds_or_dash(row, ["handicap_away_odds", "away_handicap_odds", "option_b_odds"])
+        return f"{h} / {a}"
+    if m == "언더오버":
+        u = odds_or_dash(row, ["under_odds", "odds_under", "option_a_odds"])
+        o = odds_or_dash(row, ["over_odds", "odds_over", "option_b_odds"])
+        return f"U {u} / O {o}"
+    a = odds_or_dash(row, ["option_a_odds", "home_odds"])
+    b = odds_or_dash(row, ["option_b_odds", "draw_odds"])
+    c = odds_or_dash(row, ["option_c_odds", "away_odds"])
+    vals = [x for x in [a,b,c] if x and x != "-"]
+    return " / ".join(vals) if vals else "-"
+
+
+def compact_market_line(row: Dict[str, Any]) -> str:
+    code = short_market_code(row.get("market_type"), row.get("line_value"))
+    odds = compact_odds_text(row)
+    if odds.replace(" ", "") in {"-", "-/-", "-/-/-", "U-/O-"}:
+        odds = "배당미연동"
+    pick = compact_pick_text(row)
+    grade = recommendation_grade(row)
+    grade = grade.replace("-참고용", "").replace("C-", "")
+    return f"<div class='mline'><span class='mcode'>{html_escape(code)}</span><span class='odds'>{html_escape(odds)}</span><span class='arrow'>→</span><span class='pick'>{html_escape(pick)}</span><span class='grade'>{html_escape(grade)}</span></div>"
+
+
+def html_escape(v: Any) -> str:
+    return str(clean(v)).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+
+
+def split_match_teams(row: Dict[str, Any]) -> Tuple[str, str]:
+    home = clean(row.get("home_team"))
+    away = clean(row.get("away_team"))
+    if home or away:
+        return home or "홈", away or "원정"
+    match = clean(row.get("match"))
+    if " vs " in match:
+        a,b = match.split(" vs ", 1)
+        return a.strip(), b.strip()
+    return match or "홈", "원정"
+
+
+
+
+# =========================
+# v17 한글 팀명 / 분석보기 / 오프라인 체크표
+# =========================
+TEAM_KO_MAP = {
+    "Udinese": "우디네세", "Como": "코모", "Angers": "앙제", "Lille": "릴",
+    "Bayern Munich": "바이에른 뮌헨", "Bayern": "바이에른 뮌헨", "Stuttgart": "슈투트가르트",
+    "Barcelona": "바르셀로나", "Athletic Bilbao": "빌바오", "Arsenal": "아스널",
+    "Coventry City": "코벤트리", "Wolverhampton Wanderers": "울버햄튼", "Blackburn Rovers": "블랙번",
+    "Blackburn Rover": "블랙번", "Chelsea": "첼시", "Manchester United": "맨체스터 유나이티드",
+    "Manchester City": "맨체스터 시티", "Liverpool": "리버풀", "Tottenham Hotspur": "토트넘",
+    "Real Madrid": "레알 마드리드", "Atletico Madrid": "아틀레티코 마드리드",
+    "Inter Milan": "인터 밀란", "AC Milan": "AC 밀란", "Juventus": "유벤투스",
+    "Paris Saint-Germain": "파리 생제르맹", "PSG": "파리 생제르맹",
+}
+
+LEAGUE_KO_MAP = {
+    "Italian Serie A": "세리에 A", "French Ligue 1": "리그 1", "German Bundesliga": "분데스리가",
+    "Spanish La Liga": "라리가", "English Premier League": "프리미어리그",
+    "English Championship": "챔피언십", "English League Championship": "챔피언십",
+}
+
+
+def ko_team(name: Any) -> str:
+    text = clean(name)
+    return TEAM_KO_MAP.get(text, text)
+
+
+def ko_league(name: Any) -> str:
+    text = clean(name)
+    return LEAGUE_KO_MAP.get(text, text)
+
+
+def safe_key(*parts: Any) -> str:
+    raw = "_".join(clean(p) for p in parts)
+    digest = hashlib.md5(raw.encode("utf-8")).hexdigest()[:12]
+    return digest
+
+
+def split_reasons(reasons: str) -> Dict[str, str]:
+    chunks = [x.strip() for x in clean(reasons).split("/") if x.strip()]
+    out = {"recent_form": "자료 없음", "home_away_form": "자료 없음", "h2h": "자료 없음"}
+    recent = [x for x in chunks if x.startswith("홈 최근") or x.startswith("원정 최근")]
+    homeaway = [x for x in chunks if "홈성적" in x or "원정성적" in x]
+    h2h = [x for x in chunks if "상대전적" in x]
+    if recent:
+        out["recent_form"] = " / ".join(recent)
+    if homeaway:
+        out["home_away_form"] = " / ".join(homeaway)
+    if h2h:
+        out["h2h"] = " / ".join(h2h)
+    return out
+
+
+def why_summary_from_row(row: Dict[str, Any]) -> str:
+    pick = clean(row.get("pick")) or "자료확인"
+    reasons = split_reasons(clean(row.get("reasons")))
+    bits = []
+    rf = reasons.get("recent_form", "")
+    ha = reasons.get("home_away_form", "")
+    h2h = reasons.get("h2h", "")
+    if rf and rf != "자료 없음":
+        bits.append("최근폼 반영")
+    if ha and ha != "자료 없음":
+        bits.append("홈/원정 흐름 반영")
+    if h2h and h2h != "자료 없음":
+        bits.append("상대전적 반영")
+    if not bits:
+        bits.append("자료 부족으로 참고용")
+    return f"{pick}: " + " · ".join(bits)
+
+
+def build_prediction_explain_tables(fixtures: pd.DataFrame = None, analysis: pd.DataFrame = None) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    if fixtures is None:
+        fixtures = read_csv(STANDARD_FILES["standard_upcoming_fixtures"])
+    if analysis is None:
+        analysis = read_csv(OUTPUT_FILES["analysis_scores"])
+    if fixtures is None or fixtures.empty:
+        write_csv(OUTPUT_FILES["prediction_explain"], pd.DataFrame())
+        write_csv(OUTPUT_FILES["offline_checklist"], pd.DataFrame())
+        return pd.DataFrame(), pd.DataFrame()
+    fixtures = fixtures.copy().fillna("")
+    if analysis is None:
+        analysis = pd.DataFrame()
+    analysis = analysis.copy().fillna("") if not analysis.empty else pd.DataFrame()
+    exp_rows, chk_rows = [], []
+    for _, f in fixtures.iterrows():
+        fd = f.to_dict()
+        mid = normalize_match_key(fd)
+        mdf = analysis[analysis.get("match_id", pd.Series(dtype=str)).astype(str) == mid] if not analysis.empty and "match_id" in analysis.columns else pd.DataFrame()
+        main = best_match_candidate(mdf)
+        one = pick_market_row(mdf, "승무패")
+        hcap = pick_market_row(mdf, "핸디캡")
+        uo = pick_market_row(mdf, "언더오버")
+        reasons = split_reasons(clean(main.get("reasons"))) if main else {"recent_form":"자료 없음","home_away_form":"자료 없음","h2h":"자료 없음"}
+        home_ko, away_ko = ko_team(fd.get("home_team")), ko_team(fd.get("away_team"))
+        main_pred = compact_pick_text(main) if main else "분석대기"
+        final_note = "자동구매/자동결제 없음 · 오프라인에서 직접 확인 후 수동 체크"
+        exp_rows.append({
+            "created_at": now_text(), "match_id": mid, "date": normalize_date(fd.get("date")), "kickoff_kst": clean(fd.get("kickoff_kst")),
+            "league": ko_league(fd.get("league")), "home_team": clean(fd.get("home_team")), "away_team": clean(fd.get("away_team")),
+            "home_team_ko": home_ko, "away_team_ko": away_ko, "main_prediction": main_pred,
+            "confidence": clean(main.get("confidence")) if main else "0", "risk": clean(main.get("risk")) if main else "-",
+            "recent_form": reasons.get("recent_form", "자료 없음"), "home_away_form": reasons.get("home_away_form", "자료 없음"),
+            "h2h": reasons.get("h2h", "자료 없음"), "why_summary": why_summary_from_row(main) if main else "분석자료 부족",
+            "missing_data": clean(main.get("missing_data")) if main else "분석자료 없음", "final_note": final_note,
+        })
+        chk_rows.append({
+            "created_at": now_text(), "match_id": mid, "date": normalize_date(fd.get("date")), "kickoff_kst": clean(fd.get("kickoff_kst")),
+            "league": ko_league(fd.get("league")), "home_team_ko": home_ko, "away_team_ko": away_ko, "main_prediction": main_pred,
+            "check_match": f"경기명 확인: {home_ko} vs {away_ko}",
+            "check_time": f"시간 확인: {clean(fd.get('kickoff_kst')) or '-'}",
+            "check_1x2": f"승무패 확인: {compact_pick_text(one) if one else '분석대기'}",
+            "check_handicap": f"핸디캡 확인: {compact_pick_text(hcap) if hcap else '분석대기'}",
+            "check_overunder": f"언더/오버 확인: {compact_pick_text(uo) if uo else '분석대기'}",
+            "check_odds_change": "현장/공식 화면 배당 변동 확인",
+            "check_livescore": "라이브스코어 상태 확인",
+            "check_manual_marking": "오프라인에서 직접 마킹 완료 확인",
+            "auto_buy": "NO", "auto_payment": "NO",
+        })
+    exp = pd.DataFrame(exp_rows)
+    chk = pd.DataFrame(chk_rows)
+    write_csv(OUTPUT_FILES["prediction_explain"], exp)
+    write_csv(OUTPUT_FILES["offline_checklist"], chk)
+    return exp, chk
+
+
+def render_match_detail_expander(match_df: pd.DataFrame, context: str, match_label: str = ""):
+    if match_df is None or match_df.empty:
+        return
+    first = match_df.iloc[0].to_dict()
+    mid = clean(first.get("match_id")) or safe_key(context, match_label, clean(first.get("match")))
+    main = best_match_candidate(match_df)
+    reasons = split_reasons(clean(main.get("reasons"))) if main else {}
+    home, away = split_match_teams(first)
+    home_ko, away_ko = ko_team(home), ko_team(away)
+    title = f"🔍 분석보기 / 오프라인 체크표 — {home_ko} vs {away_ko}"
+    with st.expander(title, expanded=False):
+        c1, c2, c3 = st.columns(3)
+        c1.metric("AI 예상", clean(main.get("pick")) or "분석대기")
+        c2.metric("신뢰도", clean(main.get("confidence")) or "0")
+        c3.metric("위험도", clean(main.get("risk")) or "-")
+        st.markdown("**왜 이렇게 예상했나**")
+        st.write(why_summary_from_row(main) if main else "분석자료가 부족합니다.")
+        st.markdown("**근거**")
+        st.write(f"- 최근폼: {reasons.get('recent_form', '자료 없음')}")
+        st.write(f"- 홈/원정: {reasons.get('home_away_form', '자료 없음')}")
+        st.write(f"- 상대전적: {reasons.get('h2h', '자료 없음')}")
+        st.write(f"- 부족자료: {clean(main.get('missing_data')) or '없음'}")
+        st.caption("자동구매/자동결제 없음 · 오프라인 판매점에서 직접 확인 후 수동 체크")
+        st.markdown("**오프라인 수동 구매 체크표**")
+        checks = [
+            f"경기명 확인: {home_ko} vs {away_ko}",
+            f"시간 확인: {clean(first.get('kickoff_kst')) or '-'}",
+            "승무패 번호/배당 확인",
+            "핸디캡 기준점 확인",
+            "언더/오버 기준점 확인",
+            "배당 변동 확인",
+            "라이브스코어 상태 확인",
+            "내가 직접 마킹 완료",
+        ]
+        for idx, item in enumerate(checks):
+            st.checkbox(item, key=f"chk_{context}_{safe_key(mid, idx, item)}")
+        detail = match_df.copy()
+        detail["등급"] = detail.apply(lambda r: recommendation_grade(r.to_dict()), axis=1)
+        cols = [c for c in ["market_type","line_value","pick","confidence","risk","data_sufficiency","등급","reasons","missing_data"] if c in detail.columns]
+        if cols:
+            st.dataframe(detail[cols].rename(columns={**KOR_COLUMNS, "등급":"등급"}), width="stretch", hide_index=True)
+
+def mobile_card_css():
+    st.markdown("""
+<style>
+.block-container {padding-top: 1.0rem; padding-left: 0.75rem; padding-right: 0.75rem;}
+.maru-mobile-wrap {max-width: 520px; margin: 0 auto;}
+.date-head {font-weight: 900; font-size: 1.15rem; margin: 1.1rem 0 .45rem 0; padding: .55rem .75rem; border-radius: 14px; background: #f1f3f5;}
+.league-head {font-weight: 800; font-size: .92rem; color: #415a77; margin: .55rem 0 .25rem 0;}
+.proto-card {border: 1px solid #d8dee4; border-radius: 16px; padding: 10px 10px 8px 10px; margin: 8px 0; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.05);}
+.proto-top {display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom: 6px;}
+.proto-time {font-size: .86rem; font-weight:800; color:#495057; white-space:nowrap;}
+.proto-badge {font-size:.72rem; border-radius: 999px; padding: 3px 8px; background:#eef2ff; color:#364fc7; font-weight:800; white-space:nowrap;}
+.teams {display:flex; align-items:center; justify-content:space-between; gap: 6px; font-size: 1.05rem; font-weight: 900; margin: 6px 0 8px 0;}
+.team {width:43%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+.team.away {text-align:right;}
+.vs {font-size:.8rem; color:#868e96; width:14%; text-align:center; font-weight:800;}
+.mline {display:grid; grid-template-columns: 56px minmax(94px,1fr) 16px minmax(76px,1fr) 48px; gap: 4px; align-items:center; font-size:.86rem; border-top:1px solid #eef0f2; padding: 5px 0; line-height:1.15;}
+.mcode {font-weight:900; color:#0b7285; white-space:nowrap;}
+.odds {font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color:#212529; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+.arrow {color:#adb5bd; text-align:center;}
+.pick {font-weight:900; color:#c92a2a; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+.grade {font-size:.72rem; color:#495057; text-align:right; white-space:nowrap;}
+.notice {font-size:.75rem; color:#868e96; margin-top:4px;}
+@media (max-width: 430px) {
+  .block-container {padding-left:.45rem; padding-right:.45rem;}
+  .teams {font-size:.98rem;}
+  .mline {grid-template-columns: 50px minmax(70px,1fr) 12px minmax(64px,1fr) 36px; font-size:.78rem; gap:3px;}
+  .proto-card {padding: 9px 8px 7px 8px; border-radius:14px;}
+  .proto-badge {font-size:.66rem; padding:2px 6px;}
+  .grade {font-size:.66rem;}
+}
+</style>
+""", unsafe_allow_html=True)
+
 def render_download_bar(location: str):
     st.markdown("#### 📦 로그/허브 자료 받기")
     c1, c2, c3, c4, c5 = st.columns(5)
@@ -1388,54 +1984,109 @@ def render_download_bar(location: str):
 
 
 def render_metrics():
-    c = file_counts()
-    cols = st.columns(6)
-    cols[0].metric("일정표 source", c.get("source_livescore_fixtures",0))
-    cols[1].metric("과거자료 source", c.get("source_football_data",0))
-    cols[2].metric("예정경기 standard", c.get("standard_upcoming_fixtures",0))
-    cols[3].metric("빅데이터 form", c.get("standard_team_form",0) + c.get("standard_team_home_away",0) + c.get("standard_h2h",0))
-    cols[4].metric("모바일 카드", c.get("mobile_recommendations",0))
-    cols[5].metric("허브 URL", "ON" if get_hub_url() else "OFF")
+    diag = build_diagnosis()
+    counts = diag.get("counts", {})
+    st.markdown("### 🖥️ PC 모니터링 대시보드")
+    st.caption("복잡한 영어 로그는 숨기고, 지금 필요한 상태만 크게 보여줍니다.")
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    c1.metric("앱 상태", "정상" if counts.get("error_logs",0) == 0 else "오류")
+    c2.metric("허브", diag.get("hub_url", "OFF"))
+    c3.metric("구글시트", diag.get("google_sheet_url", "OFF"))
+    c4.metric("추천", counts.get("mobile_recommendations", 0))
+    c5.metric("분석", counts.get("analysis_scores", 0))
+    c6.metric("부족자료", counts.get("missing_data_report", 0))
 
+    sm = read_csv(OUTPUT_FILES["sportmonks_status"])
+    if not sm.empty:
+        last = sm.tail(1).iloc[0].to_dict()
+        st.info(f"Sportmonks: 키 {'ON' if str(last.get('token_detected')).lower() in {'true','1','y','yes'} else 'OFF'} · HTTP {clean(last.get('http_status')) or '-'} · 상태 {clean(last.get('status')) or '-'} · 수집 {clean(last.get('parsed_rows')) or '0'}건")
+    else:
+        sm_status = sportmonks_secret_status()
+        st.info(f"Sportmonks: 키 {'ON' if sm_status.get('token_detected') else 'OFF'} · 느린API {sm_status.get('enabled')} · 아직 진단로그 없음")
 
 def render_full_run():
-    st.subheader("🚀 전체실행")
-    st.caption("일정표 → 과거자료 → 빅데이터 매칭 → 분석 → 모바일 추천 → 허브 전송/큐 저장까지 한 번에 실행합니다.")
-    render_download_bar("full_top")
-    render_metrics()
-    c1, c2 = st.columns(2)
+    st.subheader("🚀 전체 실행")
+    st.caption("버튼은 단순하게, 상세 로그는 접어둡니다. 최종 목적은 프로토 승부식 후보를 날짜별로 정리하는 것입니다.")
+    c1, c2, c3, c4 = st.columns(4)
     with c1:
-        if st.button("🚀 전체 실행하고 허브까지 보내기", type="primary"):
-            with st.spinner("전체 파이프라인 실행 중..."):
+        if st.button("🚀 전체 실행 + 허브 전송", type="primary", use_container_width=True):
+            with st.spinner("수집 → 분석 → 모바일 추천 → 허브/구글시트 전송 중..."):
                 report = run_full_pipeline(True, True, True)
-            for line in report:
-                st.success(line) if "허브:" not in line or "오류" not in line else st.warning(line)
+            st.success("전체 실행 완료")
+            with st.expander("실행 상세 보기", expanded=False):
+                for line in report:
+                    st.write(line)
             render_download_bar("full_after")
     with c2:
-        if st.button("🧪 가상 백엔드 전체 테스트"):
-            ok, msg, details = virtual_backend_test()
-            st.success(msg) if ok else st.error(msg)
-            st.json(details)
+        if st.button("📱 모바일 추천 보기", use_container_width=True):
+            st.session_state["jump_mobile_notice"] = True
+            st.info("위 탭에서 '모바일 추천'을 누르면 날짜별 카드로 볼 수 있습니다.")
+    with c3:
+        if st.button("📊 구글시트 열기", use_container_width=True):
+            url = get_google_sheet_url()
+            if url:
+                st.link_button("구글시트 허브 바로가기", url)
+            else:
+                st.warning("GOOGLE_SHEET_URL이 없습니다.")
+    with c4:
+        if st.button("🧪 고급 진단", use_container_width=True):
+            st.session_state["show_advanced_on_home"] = True
     st.divider()
-    render_recent_outputs()
+    render_clean_dashboard()
+    if st.session_state.get("show_advanced_on_home"):
+        with st.expander("고급 진단/원문 로그", expanded=True):
+            render_recent_outputs()
 
+def render_clean_dashboard():
+    diag = build_diagnosis()
+    counts = diag.get("counts", {})
+    st.markdown("### ✅ 오늘 한눈에 보기")
+    st.success(compact_status_text(diag))
+
+    rec = read_csv(OUTPUT_FILES["mobile_recommendations"])
+    best = best_proto_candidates(rec, 8)
+    if best.empty:
+        st.warning("아직 보여줄 추천 후보가 없습니다. 전체 실행을 먼저 누르세요.")
+    else:
+        st.markdown("#### 🎯 프로토 승부식 우선 후보")
+        show = best.copy()
+        show["등급"] = show.apply(lambda r: recommendation_grade(r.to_dict()), axis=1)
+        cols = [c for c in ["date","kickoff_kst","league","match","market_type","line_value","pick","confidence","risk","data_sufficiency","등급"] if c in show.columns]
+        st.dataframe(show[cols].rename(columns={**KOR_COLUMNS, "등급":"등급"}), width="stretch", hide_index=True)
+
+    with st.expander("숨김: 자료 수집/저장 건수", expanded=False):
+        status_rows = [
+            {"항목":"일정표", "건수":counts.get("source_livescore_fixtures",0)},
+            {"항목":"과거자료", "건수":counts.get("source_football_data",0)},
+            {"항목":"Sportmonks", "건수":counts.get("source_sportmonks",0)},
+            {"항목":"실제 프로토 기준점/배당", "건수":counts.get("source_proto_markets",0)},
+            {"항목":"감독/전술", "건수":counts.get("standard_coaches",0)},
+            {"항목":"부상/결장", "건수":counts.get("standard_injuries",0)},
+            {"항목":"예상 라인업", "건수":counts.get("standard_lineups",0)},
+            {"항목":"뉴스/공지", "건수":counts.get("standard_news_flags",0)},
+        ]
+        st.dataframe(pd.DataFrame(status_rows), width="stretch", hide_index=True)
+
+    miss = read_csv(OUTPUT_FILES["missing_data_report"])
+    if not miss.empty:
+        with st.expander("숨김: 부족자료 상세", expanded=False):
+            st.dataframe(ko_df(miss.tail(100)), width="stretch", hide_index=True)
 
 def render_recent_outputs():
-    t1, t2, t3, t4 = st.tabs(["모바일 추천", "분석 점수", "허브 로그", "부족자료 진단표"])
-    with t1:
+    st.subheader("🔎 고급 원문 확인")
+    st.caption("평소에는 접어두고, 오류 찾을 때만 열어봅니다.")
+    with st.expander("모바일 추천 원문", expanded=False):
         df = read_csv(OUTPUT_FILES["mobile_recommendations"])
-        st.dataframe(df.tail(100), width="stretch") if not df.empty else st.info("모바일 추천 없음")
-    with t2:
+        st.dataframe(ko_df(df.tail(150)), width="stretch", hide_index=True) if not df.empty else st.info("모바일 추천 없음")
+    with st.expander("분석 점수 원문", expanded=False):
         df = read_csv(OUTPUT_FILES["analysis_scores"])
-        st.dataframe(df.tail(100), width="stretch") if not df.empty else st.info("분석 점수 없음")
-    with t3:
+        st.dataframe(ko_df(df.tail(150)), width="stretch", hide_index=True) if not df.empty else st.info("분석 점수 없음")
+    with st.expander("허브 전송 로그", expanded=False):
         df = read_csv(OUTPUT_FILES["hub_send_logs"])
-        st.dataframe(df.tail(100), width="stretch") if not df.empty else st.info("허브 로그 없음")
-    with t4:
+        st.dataframe(df.tail(100), width="stretch", hide_index=True) if not df.empty else st.info("허브 로그 없음")
+    with st.expander("부족자료 진단표", expanded=False):
         miss = read_csv(OUTPUT_FILES["missing_data_report"])
-        st.json(build_diagnosis())
-        st.dataframe(miss.tail(100), width="stretch") if not miss.empty else st.info("부족자료 진단표 없음")
-
+        st.dataframe(ko_df(miss.tail(100)), width="stretch", hide_index=True) if not miss.empty else st.info("부족자료 진단표 없음")
 
 def render_fixture_tab():
     st.subheader("📅 일정표")
@@ -1564,25 +2215,193 @@ def render_diagnosis_tab():
         st.dataframe(read_csv(OUTPUT_FILES["error_logs"]).tail(200), width="stretch")
 
 
+
+
+def livescore_board_css():
+    st.markdown("""
+<style>
+.live-wrap {max-width: 760px; margin: 0 auto;}
+.live-date {font-weight:900; font-size:1.25rem; margin:1rem 0 .55rem 0; padding:.55rem .75rem; border-radius:14px; background:#f1f3f5;}
+.live-league {font-weight:850; font-size:.96rem; color:#334e68; margin:.65rem 0 .25rem 0;}
+.live-card {border:1px solid #d8dee4; border-radius:16px; background:#fff; padding:10px 12px; margin:8px 0; box-shadow:0 1px 4px rgba(0,0,0,.05);}
+.live-top {display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:.82rem; color:#495057; font-weight:800;}
+.live-teams {display:grid; grid-template-columns:1fr 70px 1fr; gap:8px; align-items:center; font-weight:950; font-size:1.05rem; margin:7px 0;}
+.live-home {overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+.live-away {overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:right;}
+.live-score {text-align:center; font-weight:950; color:#0b7285;}
+.live-result {display:grid; grid-template-columns:80px 1fr; gap:5px; font-size:.84rem; border-top:1px solid #eef0f2; padding-top:6px; margin-top:6px;}
+.live-label {font-weight:900; color:#0b7285;}
+.live-value {font-weight:800; color:#212529; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+.live-sub {font-size:.74rem; color:#868e96; margin-top:5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+.live-pill {border-radius:999px; padding:3px 8px; font-weight:900; background:#eef2ff; color:#364fc7; white-space:nowrap;}
+@media(max-width:430px){.live-wrap{max-width:100%;}.live-card{padding:9px 9px}.live-teams{grid-template-columns:1fr 56px 1fr; font-size:.96rem}.live-result{grid-template-columns:66px 1fr; font-size:.78rem}.live-pill{font-size:.72rem;padding:2px 6px}}
+</style>
+""", unsafe_allow_html=True)
+
+
+def render_livescore_board_tab():
+    st.subheader("📅 전체 경기 예상/결과 — 라이브스코어식")
+    st.caption("매일 전체 경기마다 양팀, 예정/결과, AI 예상, 핸디/오버를 한 화면에서 확인합니다. 추천만 뽑는 화면이 아니라 전체 일정판입니다.")
+    livescore_board_css()
+    board = read_csv(OUTPUT_FILES["fixture_prediction_results"])
+    analysis_all = read_csv(OUTPUT_FILES["analysis_scores"])
+    if board.empty:
+        # 예전 데이터가 있을 수 있으니 즉시 재생성 시도
+        board = build_fixture_prediction_results()
+    if board.empty:
+        st.warning("전체 경기 예상/결과표가 없습니다. 먼저 전체실행을 눌러주세요.")
+        return
+    board = board.fillna("").sort_values(["date", "kickoff_kst", "league", "home_team"])
+    dates = sorted([d for d in board.get("date", pd.Series(dtype=str)).unique() if clean(d)])
+    c1, c2, c3 = st.columns([1.1, 1.1, .8])
+    with c1:
+        selected_dates = st.multiselect("날짜", dates, default=dates[:3] if len(dates)>3 else dates, label_visibility="collapsed")
+    with c2:
+        mode = st.selectbox("보기", ["전체 경기", "예정 경기", "결과 있는 경기", "분석가능 우선"], label_visibility="collapsed")
+    with c3:
+        limit = st.number_input("경기수", min_value=5, max_value=200, value=80, step=5, label_visibility="collapsed")
+    view = board[board["date"].isin(selected_dates)] if selected_dates else board
+    if mode == "예정 경기":
+        view = view[view.get("actual_result", "") == "예정"]
+    elif mode == "결과 있는 경기":
+        view = view[view.get("actual_result", "") != "예정"]
+    elif mode == "분석가능 우선":
+        view = view[~view.get("main_candidate", "").isin(["분석대기", "분석불가 0 높", "확인 0 높"])]
+    view = view.head(int(limit))
+    st.markdown("<div class='live-wrap'>", unsafe_allow_html=True)
+    for date in sorted(view["date"].unique()):
+        day = view[view["date"] == date]
+        st.markdown(f"<div class='live-date'>📅 {html_escape(date_label_kr(date))} 전체 경기 {len(day)}개</div>", unsafe_allow_html=True)
+        for league in sorted(day["league"].unique()):
+            ldf = day[day["league"] == league]
+            st.markdown(f"<div class='live-league'>🏆 {html_escape(ko_league(league) or '리그 미확인')}</div>", unsafe_allow_html=True)
+            for _, r in ldf.iterrows():
+                rd = r.to_dict()
+                hs = clean(rd.get("home_score")); aw = clean(rd.get("away_score"))
+                score = f"{hs}:{aw}" if hs != "" and aw != "" else "예정"
+                result = clean(rd.get("actual_result")) or "예정"
+                status = clean(rd.get("match_status")) or "SCHEDULED"
+                badge = result if result != "예정" else clean(rd.get("main_candidate")) or "분석대기"
+                st.markdown(f"""
+<div class='live-card'>
+  <div class='live-top'><span>⏱ {html_escape(clean(rd.get('kickoff_kst')) or '-')} · {html_escape(status)}</span><span class='live-pill'>{html_escape(badge)}</span></div>
+  <div class='live-teams'><div class='live-home'>{html_escape(ko_team(rd.get('home_team')))}</div><div class='live-score'>{html_escape(score)}</div><div class='live-away'>{html_escape(ko_team(rd.get('away_team')))}</div></div>
+  <div class='live-result'><div class='live-label'>예상</div><div class='live-value'>1X2 {html_escape(rd.get('pred_1x2'))} · H {html_escape(rd.get('pred_handicap'))} · U/O {html_escape(rd.get('pred_overunder'))}</div></div>
+  <div class='live-result'><div class='live-label'>결과</div><div class='live-value'>{html_escape(result)}</div></div>
+  <div class='live-sub'>{html_escape(rd.get('proto_status'))} · {html_escape(rd.get('missing_data'))}</div>
+</div>
+""", unsafe_allow_html=True)
+                mdf = analysis_all[analysis_all.get("match_id", pd.Series(dtype=str)).astype(str) == clean(rd.get("match_id"))] if not analysis_all.empty and "match_id" in analysis_all.columns else pd.DataFrame()
+                if not mdf.empty:
+                    render_match_detail_expander(mdf, "live", clean(rd.get("match")))
+    st.markdown("</div>", unsafe_allow_html=True)
+    with st.expander("숨김: 전체 경기 예상/결과 원본", expanded=False):
+        show_cols = [c for c in ["date","kickoff_kst","league","home_team","away_team","home_score","away_score","actual_result","pred_1x2","pred_handicap","pred_overunder","main_candidate","proto_status","missing_data"] if c in board.columns]
+        st.dataframe(board[show_cols], width="stretch", hide_index=True)
+
 def render_mobile_tab():
-    st.subheader("📱 모바일 추천")
+    st.subheader("📱 모바일 추천 — Galaxy S26 Ultra 압축 프로토 카드")
+    st.caption("경기 날짜별 → 리그별 → 양팀/승무패/핸디/언더오버를 한 카드에 압축 표시합니다. 자동구매/자동결제는 없습니다.")
+    mobile_card_css()
     df = read_csv(OUTPUT_FILES["mobile_recommendations"])
     if df.empty:
         st.warning("모바일 추천카드 없음. 전체실행을 먼저 실행하세요.")
         return
-    for _, r in df.tail(50).iterrows():
-        st.markdown(f"""
-        <div style='border:1px solid #ddd;border-radius:14px;padding:14px;margin-bottom:10px;background:white'>
-        <div style='font-size:13px;color:#777'>{clean(r.get('league'))} · {clean(r.get('date'))} {clean(r.get('kickoff_kst'))}</div>
-        <div style='font-size:22px;font-weight:800'>{clean(r.get('match'))}</div>
-        <div style='margin:8px 0'>승부식: <b>{clean(r.get('market_type'))}</b> 기준점: <b>{clean(r.get('line_value'))}</b></div>
-        <div>추천: <b>{clean(r.get('pick'))}</b> · 신뢰도 <b>{clean(r.get('confidence'))}%</b> · 위험도 <b>{clean(r.get('risk'))}</b> · 자료충분도 <b>{clean(r.get('data_sufficiency'))}%</b></div>
-        <div style='font-size:13px;color:#555;margin-top:8px'>근거: {clean(r.get('reasons'))}</div>
-        <div style='font-size:13px;color:#a33;margin-top:4px'>부족자료: {clean(r.get('missing_data'))}</div>
-        <div style='font-size:12px;color:#777;margin-top:6px'>자동구매/자동결제 없음</div>
-        </div>
-        """, unsafe_allow_html=True)
 
+    df = sort_recommendations(df).fillna("")
+    dates = sorted([d for d in df.get("date", pd.Series(dtype=str)).unique() if clean(d)])
+
+    top_cols = st.columns([1.1, 1.1, .9])
+    with top_cols[0]:
+        selected_dates = st.multiselect("날짜", dates, default=dates[:2] if len(dates) > 2 else dates, label_visibility="collapsed")
+    with top_cols[1]:
+        grade_filter = st.selectbox("보기", ["우선 후보", "전체", "자료확인 포함"], label_visibility="collapsed")
+    with top_cols[2]:
+        max_matches = st.number_input("경기수", min_value=3, max_value=50, value=20, step=1, label_visibility="collapsed")
+
+    view = df[df["date"].isin(selected_dates)] if selected_dates else df
+    if grade_filter == "우선 후보":
+        view = view[(view.get("risk", "") != "높음") & (~view.get("pick", "").isin(["분석불가", "자료확인 필요", ""]))]
+    elif grade_filter == "전체":
+        view = view[~view.get("pick", "").isin(["분석불가", ""])]
+
+    if view.empty:
+        st.info("선택한 조건에 맞는 추천이 없습니다. '자료확인 포함'으로 바꿔보세요.")
+        return
+
+    # 경기 단위 제한: 한 경기 안에서는 주요 승부식을 모두 보여준다.
+    key_cols = ["date", "league", "kickoff_kst", "match"]
+    match_keys = view[key_cols].drop_duplicates().head(int(max_matches))
+    allowed = set(tuple(x) for x in match_keys[key_cols].astype(str).values.tolist())
+    view = view[view[key_cols].astype(str).apply(lambda r: tuple(r.values.tolist()) in allowed, axis=1)]
+
+    st.markdown("<div class='maru-mobile-wrap'>", unsafe_allow_html=True)
+    for date in sorted(view["date"].unique()):
+        day_df = view[view["date"] == date]
+        st.markdown(f"<div class='date-head'>📅 {html_escape(date_label_kr(date))}</div>", unsafe_allow_html=True)
+        for league in sorted(day_df["league"].unique()):
+            league_df = day_df[day_df["league"] == league]
+            st.markdown(f"<div class='league-head'>🏆 {html_escape(ko_league(league))}</div>", unsafe_allow_html=True)
+            for (kickoff, match), mdf in league_df.groupby(["kickoff_kst", "match"], dropna=False, sort=True):
+                mdf = mdf.copy()
+                # 주요 시장 먼저. 너무 길어지지 않게 기본 1X2/H/UO/DC만 먼저 보이고, 나머지는 접기에서 본다.
+                major = mdf[mdf["market_type"].isin(["승무패", "핸디캡", "언더오버", "더블찬스"])]
+                if major.empty:
+                    major = mdf.head(4)
+                candidate = best_proto_candidates(mdf, 1)
+                if not candidate.empty:
+                    r0 = candidate.iloc[0].to_dict()
+                    badge = f"{short_market_code(r0.get('market_type'), r0.get('line_value'))} {compact_pick_text(r0)}"
+                    card_grade = recommendation_grade(r0)
+                else:
+                    badge = "자료확인"
+                    card_grade = "C-자료확인"
+                home, away = split_match_teams(mdf.iloc[0].to_dict())
+                home, away = ko_team(home), ko_team(away)
+                real_any = any(is_real_proto_row(r.to_dict()) for _, r in mdf.iterrows())
+                proto_state = "실배당" if real_any else "배당미연동"
+                market_html = "".join(compact_market_line(r.to_dict()) for _, r in major.iterrows())
+                notice_bits = []
+                if not real_any:
+                    notice_bits.append("실제 프로토 배당 미연동")
+                miss = clean(mdf.iloc[0].get("missing_data"))
+                if miss:
+                    short_miss = miss.replace("감독 취임일/전술 없음 / ", "").replace("영입/뉴스/스카우트 없음", "영입/뉴스 없음")
+                    notice_bits.append(short_miss)
+                notice = " · ".join(notice_bits[:2])
+                st.markdown(f"""
+<div class='proto-card'>
+  <div class='proto-top'>
+    <div class='proto-time'>⏱ {html_escape(kickoff)}</div>
+    <div class='proto-badge'>{html_escape(badge)} · {html_escape(card_grade)} · {html_escape(proto_state)}</div>
+  </div>
+  <div class='teams'><div class='team home'>{html_escape(home)}</div><div class='vs'>VS</div><div class='team away'>{html_escape(away)}</div></div>
+  {market_html}
+  <div class='notice'>{html_escape(notice)}</div>
+</div>
+""", unsafe_allow_html=True)
+                render_match_detail_expander(mdf, "mobile", str(match))
+                extra = mdf[~mdf["market_type"].isin(["승무패", "핸디캡", "언더오버", "더블찬스"])]
+                if not extra.empty:
+                    with st.expander(f"숨김: {match} 기타 승부식/근거", expanded=False):
+                        extra_rows = []
+                        for _, r in extra.iterrows():
+                            rd = r.to_dict()
+                            extra_rows.append({
+                                "승부식": short_market_code(rd.get("market_type"), rd.get("line_value")),
+                                "배당": compact_odds_text(rd),
+                                "추천": compact_pick_text(rd),
+                                "등급": recommendation_grade(rd),
+                            })
+                        st.dataframe(pd.DataFrame(extra_rows), width="stretch", hide_index=True)
+                        detail = mdf.copy()
+                        detail["등급"] = detail.apply(lambda r: recommendation_grade(r.to_dict()), axis=1)
+                        cols = [c for c in ["market_type","line_value","pick","confidence","risk","data_sufficiency","등급","reasons","missing_data"] if c in detail.columns]
+                        st.dataframe(detail[cols].rename(columns={**KOR_COLUMNS, "등급":"등급"}), width="stretch", hide_index=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    with st.expander("숨김: 모바일 추천 원본 전체", expanded=False):
+        st.dataframe(ko_df(df), width="stretch", hide_index=True)
 
 def main():
     ensure_dirs()
@@ -1590,17 +2409,18 @@ def main():
     st.title("⚽ 마루 스포츠 프로토 일정 허브")
     st.caption("일정표 자동수집 → 과거 빅데이터 매칭 → 승부식 분석 → 모바일 추천 → 허브/구글시트 전송")
     render_metrics()
-    tabs = st.tabs(["전체실행", "PC 모니터링", "일정표", "자료 입력", "모바일 추천", "허브 전송", "백엔드 진단"])
+    tabs = st.tabs(["대시보드", "전체 경기", "PC 모니터링", "일정표", "자료 입력", "모바일 추천", "허브 전송", "백엔드 진단"])
     with tabs[0]: render_full_run()
-    with tabs[1]:
+    with tabs[1]: render_livescore_board_tab()
+    with tabs[2]:
         render_download_bar("monitor")
         render_recent_outputs()
-    with tabs[2]: render_fixture_tab()
-    with tabs[3]: render_data_input_tab()
-    with tabs[4]: render_mobile_tab()
-    with tabs[5]: render_hub_tab()
-    with tabs[6]: render_diagnosis_tab()
-    st.caption(f"{APP_VERSION} · {now_text()} · 자동구매/자동결제 없음 · 기존 기능 유지 + Sportmonks 진단 추가")
+    with tabs[3]: render_fixture_tab()
+    with tabs[4]: render_data_input_tab()
+    with tabs[5]: render_mobile_tab()
+    with tabs[6]: render_hub_tab()
+    with tabs[7]: render_diagnosis_tab()
+    st.caption(f"{APP_VERSION} · {now_text()} · 자동구매/자동결제 없음 · 기존 기능 유지 + 라이브스코어식 전체 경기 예상/결과판")
 
 
 if __name__ == "__main__":

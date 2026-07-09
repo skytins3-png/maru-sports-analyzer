@@ -1,44 +1,42 @@
-# MARU SPORTS PROTO FIXTURE HUB v13
+# MARU SPORTS PROTO FIXTURE HUB v17
 
-기존 v12 기능은 제거하지 않고 유지했습니다.
+## v17 목적
+기존 v16 기능을 빼지 않고 유지하면서 다음 기능만 추가했습니다.
 
-## v13 추가 내용
-- Sportmonks Secret 감지
-- USE_SLOW_API=Y일 때만 Sportmonks 실제 호출
-- 키가 비어 있으면 호출 생략하고 앱 로딩 보호
-- HTTP 상태, data 건수, participants 파싱 건수, 저장 건수 기록
-- source_sportmonks.csv 저장
-- source_livescore_fixtures.csv에도 Sportmonks 일정 병합
-- sportmonks_status.csv 생성
-- 허브 Payload와 Google Sheet에 sportmonks_status 전송
-- 백엔드 진단 탭에 Sportmonks API 단독 테스트 버튼 추가
+- 전체 경기판 유지
+- 경기별 `분석보기` 숨김/펼침 추가
+- 오프라인 수동 구매 체크표 추가
+- 팀명/리그명 한국어 표시 보강
+- `prediction_explain.csv` 생성
+- `offline_checklist.csv` 생성
+- 허브 payload 및 구글시트 전송 항목에 `prediction_explain`, `offline_checklist` 추가
+- 자동구매/자동결제 없음 유지
 
-## 유지 기능
-- 전체실행
-- TheSportsDB 일정표 자동수집
-- football-data 과거자료 자동수집
-- standard 변환
-- 팀폼/홈원정/상대전적 계산
-- 승부식 분석
-- 모바일 추천
-- 허브 전송
-- 구글시트 바로가기
-- 부족자료 진단표
-- 로그 ZIP
-- 상태 리포트
+## 화면 구조
 
-## Secrets 예시
-```toml
-SPORTMONKS_API_TOKEN = "형님 키"
-SPORTMONKS_API_KEY = "형님 키"
-SPORTS_API_KEY = "형님 키"
+### 모바일/전체 경기판
+- 날짜별 전체 경기 표시
+- 양팀, 시간, 예상, 결과 표시
+- 경기마다 `분석보기 / 오프라인 체크표` 펼침
 
-SKYTOTO_SPORTS_API_PROVIDER = "sportmonks"
-SKYTOTO_SPORTS_API_URL = "https://api.sportmonks.com/v3/football/fixtures/date/{today_dash}?api_token={api_key}&include=participants;league"
-USE_SLOW_API = "Y"
+### 분석보기
+- 왜 이 예상인지 요약
+- 최근폼
+- 홈/원정 흐름
+- 상대전적
+- 부족자료
+- 상세 승부식 표
 
-GAS_WEBAPP_URL = "https://script.google.com/macros/s/웹앱주소/exec"
-GOOGLE_SHEET_URL = "https://docs.google.com/spreadsheets/d/구글시트ID/edit"
-```
+### 오프라인 체크표
+- 경기명 확인
+- 시간 확인
+- 승무패 번호/배당 확인
+- 핸디캡 기준점 확인
+- 언더/오버 기준점 확인
+- 배당 변동 확인
+- 라이브스코어 상태 확인
+- 직접 마킹 완료 확인
 
-키가 없을 때는 `USE_SLOW_API = "N"` 권장.
+## 중요 원칙
+자동구매, 자동결제, 자동베팅 기능은 없습니다.
+이 앱은 분석/확인/오프라인 수동 체크 보조용입니다.
