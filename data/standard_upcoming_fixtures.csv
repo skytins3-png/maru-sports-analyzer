@@ -1,0 +1,4 @@
+﻿match_id,date,kickoff_kst,sport,country,league,home_team,away_team,status,source,proto_game_no,proto_round,proto_market_type,proto_pick,proto_odds,proto_livescore_status,match_score,home_score,away_score
+ls_2026-07-10_20:00_한국M_일본M,2026-07-10,20:00,축구,,국제,한국M,일본M,SCHEDULED,proto_livescore_matched_auto_schedule,5702,,승무패,패,1.15,MATCHED,1.0,,
+ls_2026-07-10_22:00_미국_벨기에,2026-07-10,22:00,축구,,국제,미국,벨기에,SCHEDULED,proto_livescore_matched_auto_schedule,5788,,핸디캡,승,1.48,MATCHED,1.0,,
+ls_2026-07-10_23:00_LA_Dodgers_Colorado_Rockies,2026-07-10,23:00,축구,,MLB,LA다저스,콜로라도,SCHEDULED,proto_livescore_matched_auto_schedule,5820,,언더오버,오버,1.82,MATCHED,1.0,,

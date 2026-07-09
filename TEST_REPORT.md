@@ -1,6 +1,6 @@
 # v23-auto-schedule-proto-match TEST REPORT
 
-- time: 2026-07-09 17:42:16 KST
+- time: 2026-07-09 20:52:05 KST
 - status: PASS
 - total_checks: 79
 
@@ -113,4 +113,4 @@ Name: date, dtype: object
 - loop_10_board_created: PASS board=2 fixtures=2
 - loop_10_no_auto_buy: PASS 
 - loop_10_no_auto_payment: PASS 
-- auto_collect_and_match_summary: PASS {"time": "2026-07-09 17:42:16 KST", "days": 7, "auto_schedule_rows": 3, "auto_schedule_total": 3, "proto_rows": 3, "matched_rows": 3, "purchase_rows_today_7d": 2, "message": "자동수집 일정과 프로토 자료 매칭 완료"}
+- auto_collect_and_match_summary: PASS {"time": "2026-07-09 20:52:05 KST", "days": 7, "auto_schedule_rows": 3, "auto_schedule_total": 3, "proto_rows": 3, "matched_rows": 3, "purchase_rows_today_7d": 2, "message": "자동수집 일정과 프로토 자료 매칭 완료"}

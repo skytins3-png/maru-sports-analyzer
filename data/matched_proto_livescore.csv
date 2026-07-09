@@ -1,0 +1,5 @@
+﻿proto_game_no,proto_round,date,kickoff_kst,league,home_team,away_team,market_type,line_value,proto_pick,proto_odds,source,match_id,live_date,live_kickoff_kst,live_league,live_home_team,live_away_team,live_status,home_score,away_score,match_score,proto_livescore_status
+5702,,2026-07-10,20:00,국제,한국M,일본M,승무패,,패,1.15,proto_livescore_matched,ls_2026-07-10_20:00_한국M_일본M,2026-07-10,20:00,국제,한국M,일본M,SCHEDULED,,,1.0,MATCHED
+5788,,2026-07-10,22:00,국제,미국,벨기에,핸디캡,1.0,승,1.48,proto_livescore_matched,ls_2026-07-10_22:00_미국_벨기에,2026-07-10,22:00,국제,미국,벨기에,SCHEDULED,,,1.0,MATCHED
+5820,,2026-07-10,23:00,MLB,LA다저스,콜로라도,언더오버,10.5,오버,1.82,proto_livescore_matched,ls_2026-07-10_23:00_LA_Dodgers_Colorado_Rockies,2026-07-10,23:00,MLB,LA Dodgers,Colorado Rockies,SCHEDULED,,,1.0,MATCHED
+9999,,2026-08-16,15:00,EPL,아스널,코번트리,승무패,,홈승,1.44,proto_livescore_matched,ls_2026-08-16_15:00_Arsenal_Coventry,2026-08-16,15:00,EPL,Arsenal,Coventry,SCHEDULED,,,1.0,MATCHED

@@ -1,0 +1,5 @@
+﻿match_id,date,kickoff_kst,sport,league,home_team,away_team,status,home_score,away_score,source
+ls_2026-07-10_20:00_한국M_일본M,2026-07-10,20:00,축구,국제,한국M,일본M,SCHEDULED,,,livescore_manual
+ls_2026-07-10_22:00_미국_벨기에,2026-07-10,22:00,축구,국제,미국,벨기에,SCHEDULED,,,livescore_manual
+ls_2026-07-10_23:00_LA_Dodgers_Colorado_Rockies,2026-07-10,23:00,야구,MLB,LA Dodgers,Colorado Rockies,SCHEDULED,,,livescore_manual
+ls_2026-08-16_15:00_Arsenal_Coventry,2026-08-16,15:00,축구,EPL,Arsenal,Coventry,SCHEDULED,,,livescore_manual
