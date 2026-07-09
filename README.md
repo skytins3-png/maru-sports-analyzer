@@ -1,28 +1,34 @@
-# MARU SPORTS PROTO FIXTURE HUB v21
+# MARU SPORTS PROTO FIXTURE HUB v23
 
-## version
-v21-clickable-offline-ticket-mobile
+버전: `v23-auto-schedule-proto-match`
 
-## 핵심 수정
-- 모바일 화면에서 이미지가 아니라 실제 Streamlit 버튼으로 작동합니다.
-- 경기 카드 아래에 실제 버튼 3개를 제공합니다.
-  - 🔍 분석보기
-  - 🧾 오프라인 체크
-  - ☁️ 허브확인
-- 버튼을 누르면 session_state 토글로 패널이 열리고 다시 누르면 닫힙니다.
-- 오프라인 수동구매 체크표는 체크박스 8개로 확인합니다.
-- 자동구매/자동결제는 없습니다.
-- 오늘/내일/전체 예정 날짜 필터는 실제 날짜 기준입니다.
-- 기존 허브/구글시트/분석/결과/로그 기능은 유지했습니다.
+## 목적
+
+형님이 일정표를 손으로 가져오지 않도록 앱이 오늘~7일 이내 자동수집 일정을 만들고, 기존 프로토 자료와 자동 매칭합니다.
+
+## 핵심 변경
+
+- TheSportsDB `eventsnextleague` 중심 수집을 구매용으로 쓰지 않음
+- 오늘~7일 날짜 기준 `eventsday` 자동수집 추가
+- 자동수집 일정은 `data/source_livescore_schedule.csv`에 저장
+- 기존 프로토 자료는 `source_proto_ticket` / `source_proto_markets`를 자동 사용
+- MATCHED 된 경기만 `standard_upcoming_fixtures` 생성
+- MATCHED 된 경기만 분석/전체 경기판/오프라인 체크표 생성
+- 8월/먼 미래 일정은 구매용/오프라인 체크표 제외
+- 자동구매/자동결제 없음 유지
 
 ## 사용 흐름
-1. PC에서 전체 실행 + 허브 전송
-2. 모바일 URL 접속: `?mode=mobile`
-3. 경기 카드 확인
-4. [분석보기] 눌러 근거 확인
-5. [오프라인 체크] 눌러 실물 용지와 대조
-6. 판매점에서 직접 확인 후 수동 구매
-7. [허브확인] 눌러 저장/시트 상태 확인
 
-## 검사
-자세한 내용은 TEST_REPORT.md 및 TEST_REPORT_JSON.json 참고.
+1. GitHub에 v23 파일 덮어쓰기
+2. Streamlit Reboot app
+3. PC 앱 > 일정표 탭
+4. `자동수집+매칭+분석` 실행
+5. 모바일 `?mode=mobile` 접속
+6. MATCHED 경기만 분석보기/오프라인 체크/허브확인 버튼 사용
+
+## 정확한 한계
+
+- LiveScore.com 직접 스크래핑은 아님
+- TheSportsDB/Sportmonks 등 자동수집 가능 자료를 이용한 일정 매칭 구조
+- 프로토 실제 경기표/배당 자료가 앱에 없으면 MATCHED 구매용 경기는 0건
+- MATCHED 0건이면 오프라인 체크표를 만들지 않음

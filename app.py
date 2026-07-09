@@ -14,7 +14,7 @@ import streamlit as st
 
 KST = timezone(timedelta(hours=9))
 APP_NAME = "MARU SPORTS PROTO FIXTURE HUB"
-APP_VERSION = "v21-clickable-offline-ticket-mobile"
+APP_VERSION = "v23-auto-schedule-proto-match"
 DATA_DIR = "data"
 LOG_DIR = "logs"
 PAYLOAD_DIR = "payloads"
@@ -29,6 +29,9 @@ SOURCE_FILES = {
     "source_thesportsdb": f"{DATA_DIR}/source_thesportsdb.csv",
     "source_proto_markets": f"{DATA_DIR}/source_proto_markets.csv",
     "source_manual": f"{DATA_DIR}/source_manual.csv",
+    "source_proto_ticket": f"{DATA_DIR}/source_proto_ticket.csv",
+    "source_livescore_schedule": f"{DATA_DIR}/source_livescore_schedule.csv",
+    "matched_proto_livescore": f"{DATA_DIR}/matched_proto_livescore.csv",
 }
 
 STANDARD_FILES = {
@@ -85,6 +88,9 @@ THESPORTSDB_LEAGUES = {
     "French Ligue 1": "4334",
 }
 
+THESPORTSDB_SPORTS = ["Soccer", "Baseball", "Basketball", "Ice Hockey"]
+AUTO_MATCH_DAYS = 7
+
 MARKET_TEMPLATES = [
     {"market_type": "승무패", "line_value": "", "option_a": "홈승", "option_b": "무승부", "option_c": "원정승"},
     {"market_type": "핸디캡", "line_value": "+1.0", "option_a": "홈핸디", "option_b": "원정핸디", "option_c": ""},
@@ -116,7 +122,7 @@ EMPTY_SCHEMAS = {
     "sportmonks_status": ["time", "provider", "enabled", "token_detected", "token_preview", "url_template", "safe_final_url", "http_status", "status", "response_data_count", "parsed_rows", "participants_parsed", "message", "response_preview"],
     "fixture_prediction_results": ["created_at", "match_id", "date", "kickoff_kst", "league", "home_team", "away_team", "match", "match_status", "home_score", "away_score", "actual_result", "pred_1x2", "pred_1x2_conf", "pred_1x2_risk", "pred_handicap", "pred_overunder", "pred_doublechance", "main_candidate", "main_confidence", "main_risk", "proto_status", "missing_data"],
     "prediction_explain": ["created_at", "match_id", "date", "kickoff_kst", "league", "home_team", "away_team", "home_team_ko", "away_team_ko", "main_prediction", "confidence", "risk", "recent_form", "home_away_form", "h2h", "why_summary", "missing_data", "final_note"],
-    "offline_checklist": ["created_at", "match_id", "date", "kickoff_kst", "league", "home_team_ko", "away_team_ko", "main_prediction", "check_match", "check_time", "check_1x2", "check_handicap", "check_overunder", "check_odds_change", "check_livescore", "check_manual_marking", "auto_buy", "auto_payment"],
+    "offline_checklist": ["created_at", "match_id", "date", "kickoff_kst", "league", "home_team_ko", "away_team_ko", "main_prediction", "proto_game_no", "proto_market_type", "proto_pick", "proto_odds", "livescore_match_status", "match_score", "check_match", "check_time", "check_1x2", "check_handicap", "check_overunder", "check_odds_change", "check_livescore", "check_manual_marking", "auto_buy", "auto_payment"],
 }
 
 
@@ -134,7 +140,11 @@ COLUMN_MAP = {
     "injuries": "injuries", "부상": "injuries", "missing_players": "missing_players", "결장": "missing_players",
     "lineup": "lineup", "라인업": "lineup", "transfers": "transfers", "영입": "transfers", "스카우트": "scouting_note",
     "news": "news", "뉴스": "news", "note": "note", "메모": "note",
-    "market_type": "market_type", "승부식": "market_type", "line_value": "line_value", "기준점": "line_value",
+    "market_type": "market_type", "승부식": "market_type", "게임유형": "market_type", "line_value": "line_value", "기준점": "line_value",
+    "경기번호": "proto_game_no", "게임번호": "proto_game_no", "번호": "proto_game_no",
+    "예상": "proto_pick", "선택": "proto_pick", "픽": "proto_pick", "pick": "proto_pick",
+    "배당률": "proto_odds", "배당": "proto_odds", "odds": "proto_odds",
+    "회차": "proto_round", "투표금액": "stake", "금액": "stake",
 }
 
 
@@ -172,6 +182,213 @@ def safe_int(value, default=None):
     except Exception:
         return default
 
+
+
+
+# --- v22: 프로토 경기표 + 라이브스코어 일정 매칭 엔진 ---
+def normalize_match_team(value: Any) -> str:
+    """한글/영문/기호 차이를 줄여 팀명 유사도 매칭용 문자열로 만든다."""
+    import re
+    t = clean(value).lower()
+    repl = {
+        "fc":"", "afc":"", "cf":"", "sc":"", "utd":"united", "u-":"u", "women":"w", "woman":"w",
+        "맨체스터 시티":"맨시티", "맨시티":"맨시티", "manchester city":"맨시티",
+        "맨체스터 united":"맨유", "manchester united":"맨유", "man united":"맨유", "맨유":"맨유",
+        "바이에른 뮌헨":"바이에른", "bayern munich":"바이에른", "bayern münchen":"바이에른",
+        "레알 마드리드":"레알마드리드", "real madrid":"레알마드리드",
+        "바르셀로나":"바르셀로나", "barcelona":"바르셀로나",
+        "아스널":"아스널", "arsenal":"아스널", "코번트리":"코번트리", "coventry":"코번트리",
+        "la다저스":"ladodgers", "la dodgers":"ladodgers", "los angeles dodgers":"ladodgers", "dodgers":"ladodgers",
+        "콜로라도":"coloradorockies", "콜로로키":"coloradorockies", "colorado rockies":"coloradorockies", "rockies":"coloradorockies",
+        "일본m":"일본", "한국m":"한국", "미국m":"미국", "멕시코m":"멕시코",
+    }
+    for k, v in repl.items():
+        t = t.replace(k, v)
+    t = re.sub(r"[^0-9a-z가-힣]+", "", t)
+    t = t.replace("footballclub", "").replace("club", "")
+    return t.strip()
+
+
+def team_similarity_v22(a: Any, b: Any) -> float:
+    aa, bb = normalize_match_team(a), normalize_match_team(b)
+    if not aa or not bb:
+        return 0.0
+    if aa == bb:
+        return 1.0
+    if aa in bb or bb in aa:
+        return 0.92
+    return SequenceMatcher(None, aa, bb).ratio()
+
+
+def parse_proto_or_livescore_text(text: str) -> pd.DataFrame:
+    """CSV/TSV/복사표를 최대한 안전하게 DataFrame으로 읽는다."""
+    text = (text or "").strip()
+    if not text:
+        return pd.DataFrame()
+    for sep in [",", "\t", ";", "|"]:
+        try:
+            df = pd.read_csv(StringIO(text), sep=sep)
+            if len(df.columns) >= 2:
+                return normalize_columns(df)
+        except Exception:
+            pass
+    # 공백 분리 fallback: 경기번호 날짜 시간 리그 홈 원정 예상 배당
+    try:
+        rows=[]
+        for line in text.splitlines():
+            parts=[x for x in line.strip().split() if x]
+            if len(parts)>=5:
+                rows.append(parts)
+        if rows:
+            maxlen=max(len(r) for r in rows)
+            rows=[r+[""]*(maxlen-len(r)) for r in rows]
+            return pd.DataFrame(rows)
+    except Exception:
+        return pd.DataFrame()
+    return pd.DataFrame()
+
+
+def prepare_proto_ticket_df(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+    df = normalize_columns(df).copy().fillna("")
+    # 다양한 원본을 표준 컬럼으로 보정
+    for c in ["date", "kickoff_kst", "league", "home_team", "away_team", "market_type", "line_value", "proto_game_no", "proto_pick", "proto_odds", "proto_round"]:
+        if c not in df.columns:
+            df[c] = ""
+    out=[]
+    for i,r in df.iterrows():
+        home, away = clean(r.get("home_team")), clean(r.get("away_team"))
+        if not home or not away:
+            match = clean(r.get("match")) or clean(r.get("경기"))
+            if " vs " in match.lower():
+                parts = match.replace(" VS ", " vs ").replace(" : ", " vs ").split(" vs ")
+                if len(parts)>=2:
+                    home, away = parts[0].strip(), parts[1].strip()
+        if not home or not away:
+            continue
+        date = normalize_date(r.get("date"))
+        kickoff = clean(r.get("kickoff_kst"))[:5]
+        game_no = clean(r.get("proto_game_no")) or clean(r.get("game_no")) or clean(r.get("match_no")) or f"manual_{i+1}"
+        out.append({
+            "proto_game_no": game_no,
+            "proto_round": clean(r.get("proto_round")),
+            "date": date,
+            "kickoff_kst": kickoff,
+            "league": clean(r.get("league")),
+            "home_team": home,
+            "away_team": away,
+            "market_type": clean(r.get("market_type")) or "승무패",
+            "line_value": clean(r.get("line_value")),
+            "proto_pick": clean(r.get("proto_pick")) or clean(r.get("pick")),
+            "proto_odds": clean(r.get("proto_odds")) or clean(r.get("odds")),
+            "source": "proto_ticket",
+        })
+    return pd.DataFrame(out)
+
+
+def prepare_livescore_schedule_df(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+    df = normalize_columns(df).copy().fillna("")
+    for c in ["match_id", "date", "kickoff_kst", "sport", "league", "home_team", "away_team", "status", "home_score", "away_score", "source"]:
+        if c not in df.columns:
+            df[c] = ""
+    out=[]
+    for i,r in df.iterrows():
+        home, away = clean(r.get("home_team")), clean(r.get("away_team"))
+        if not home or not away:
+            match = clean(r.get("match")) or clean(r.get("경기"))
+            if " vs " in match.lower():
+                parts = match.replace(" VS ", " vs ").replace(" : ", " vs ").split(" vs ")
+                if len(parts)>=2:
+                    home, away = parts[0].strip(), parts[1].strip()
+        if not home or not away:
+            continue
+        date = normalize_date(r.get("date"))
+        kickoff = clean(r.get("kickoff_kst"))[:5]
+        mid = clean(r.get("match_id")) or f"ls_{date}_{kickoff}_{home}_{away}".replace(" ", "_")
+        out.append({
+            "match_id": mid,
+            "date": date,
+            "kickoff_kst": kickoff,
+            "sport": clean(r.get("sport")) or "축구",
+            "league": clean(r.get("league")),
+            "home_team": home,
+            "away_team": away,
+            "status": clean(r.get("status")) or "SCHEDULED",
+            "home_score": clean(r.get("home_score")),
+            "away_score": clean(r.get("away_score")),
+            "source": clean(r.get("source")) or "livescore_schedule",
+        })
+    return pd.DataFrame(out)
+
+
+def match_proto_with_livescore(proto_df: pd.DataFrame = None, live_df: pd.DataFrame = None, max_days: int = 7) -> pd.DataFrame:
+    """프로토 경기표와 라이브스코어 일정이 날짜/팀명 기준으로 맞는 경기만 MATCHED 처리한다."""
+    proto = prepare_proto_ticket_df(proto_df if proto_df is not None else read_csv(SOURCE_FILES.get("source_proto_ticket", "")))
+    live_raw = live_df if live_df is not None else read_csv(SOURCE_FILES.get("source_livescore_schedule", ""))
+    if live_raw is None or live_raw.empty:
+        # 기존 자동수집 파일도 보조 라이브스코어 일정 후보로 사용하되, MATCHED 없이는 구매용으로 올리지 않는다.
+        live_raw = read_csv(SOURCE_FILES["source_livescore_fixtures"])
+    live = prepare_livescore_schedule_df(live_raw)
+    if proto.empty or live.empty:
+        out = pd.DataFrame()
+        write_csv(SOURCE_FILES.get("matched_proto_livescore", f"{DATA_DIR}/matched_proto_livescore.csv"), out)
+        return out
+    today = datetime.now(KST).date()
+    rows=[]
+    for _, p in proto.iterrows():
+        pdate = normalize_date(p.get("date"))
+        candidates = live.copy()
+        if pdate:
+            candidates = candidates[candidates["date"].astype(str) == pdate]
+        else:
+            # 프로토 날짜가 비었으면 오늘~max_days 안에서만 후보. 8월 먼 일정은 구매용 후보 제외.
+            candidates = candidates[candidates["date"].astype(str).apply(lambda x: bool(x) and 0 <= (datetime.fromisoformat(x).date() - today).days <= max_days if len(str(x))>=10 else False)]
+        best = None; best_score = 0.0
+        for _, l in candidates.iterrows():
+            direct = (team_similarity_v22(p.get("home_team"), l.get("home_team")) + team_similarity_v22(p.get("away_team"), l.get("away_team"))) / 2
+            swapped = (team_similarity_v22(p.get("home_team"), l.get("away_team")) + team_similarity_v22(p.get("away_team"), l.get("home_team"))) / 2
+            score = max(direct, swapped)
+            if score > best_score:
+                best_score = score; best = l.to_dict() | {"home_away_swapped": "Y" if swapped > direct else "N"}
+        status = "MATCHED" if best is not None and best_score >= 0.72 else "NO_MATCH"
+        base = p.to_dict()
+        base.update({
+            "match_id": (clean(best.get("match_id")) if best else f"proto_{clean(p.get('proto_game_no'))}_{pdate}_{clean(p.get('home_team'))}_{clean(p.get('away_team'))}".replace(" ", "_")),
+            "live_date": clean(best.get("date")) if best else "",
+            "live_kickoff_kst": clean(best.get("kickoff_kst")) if best else "",
+            "live_league": clean(best.get("league")) if best else "",
+            "live_home_team": clean(best.get("home_team")) if best else "",
+            "live_away_team": clean(best.get("away_team")) if best else "",
+            "live_status": clean(best.get("status")) if best else "",
+            "home_score": clean(best.get("home_score")) if best else "",
+            "away_score": clean(best.get("away_score")) if best else "",
+            "match_score": round(float(best_score), 3),
+            "proto_livescore_status": status,
+            "source": "proto_livescore_matched" if status == "MATCHED" else "proto_unmatched",
+        })
+        rows.append(base)
+    out = pd.DataFrame(rows)
+    write_csv(SOURCE_FILES.get("matched_proto_livescore", f"{DATA_DIR}/matched_proto_livescore.csv"), out)
+    return out
+
+
+def matched_rows_for_purchase(max_days: int = 7) -> pd.DataFrame:
+    m = read_csv(SOURCE_FILES.get("matched_proto_livescore", f"{DATA_DIR}/matched_proto_livescore.csv"))
+    if m.empty:
+        return pd.DataFrame()
+    today = datetime.now(KST).date()
+    m = m.copy().fillna("")
+    m["date"] = m["date"].apply(normalize_date)
+    def _in_window(x):
+        try:
+            d = datetime.fromisoformat(str(x)).date()
+            return 0 <= (d - today).days <= max_days
+        except Exception:
+            return False
+    return m[(m.get("proto_livescore_status", "").astype(str) == "MATCHED") & (m["date"].astype(str).apply(_in_window))].copy()
 
 def normalize_date(value: Any) -> str:
     text = clean(value)
@@ -702,36 +919,180 @@ def fetch_thesportsdb_fixtures(league_ids: Dict[str, str] = None) -> Tuple[pd.Da
     return pd.DataFrame(rows), pd.DataFrame(logs)
 
 
-def standardize_fixtures() -> Tuple[pd.DataFrame, str]:
-    src = read_csv(SOURCE_FILES["source_livescore_fixtures"])
-    if src.empty:
-        write_csv(STANDARD_FILES["standard_upcoming_fixtures"], pd.DataFrame())
-        return pd.DataFrame(), "일정표 source 없음"
+
+
+def fetch_thesportsdb_date_range(days: int = AUTO_MATCH_DAYS, sports: List[str] = None) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """v23: 오늘~N일 날짜 기준으로 TheSportsDB eventsday API를 호출한다.
+    eventsnextleague가 유럽 다음 시즌(8월)을 끌고 오는 문제를 막기 위해 날짜 범위를 먼저 고정한다.
+    이 함수는 앱이 자동으로 일정 후보를 가져오는 용도이며, LiveScore.com 직접 스크래핑이 아니다.
+    """
+    sports = sports or THESPORTSDB_SPORTS
+    rows, logs = [], []
+    today = datetime.now(KST).date()
+    for offset in range(0, int(days) + 1):
+        day = today + timedelta(days=offset)
+        ds = day.isoformat()
+        for sport in sports:
+            url = f"https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d={ds}&s={sport}"
+            log = {"time": now_text(), "source": "TheSportsDB-eventsday", "url": url, "date": ds, "sport": sport, "http_status": "", "raw_events": 0, "parsed": 0, "status": "fail", "message": ""}
+            try:
+                r = requests.get(url, timeout=10, headers={"User-Agent": "MARU-Sports-Analyzer/9"})
+                log["http_status"] = str(r.status_code)
+                if r.status_code != 200:
+                    log["message"] = f"HTTP {r.status_code}"
+                    logs.append(log)
+                    continue
+                data = r.json()
+                events = data.get("events") or []
+                log["raw_events"] = len(events)
+                parsed = 0
+                for e in events:
+                    home = clean(e.get("strHomeTeam"))
+                    away = clean(e.get("strAwayTeam"))
+                    date = normalize_date(e.get("dateEvent") or ds)
+                    if date != ds:
+                        continue
+                    if not home or not away:
+                        continue
+                    time_raw = clean(e.get("strTime"))[:5]
+                    mid = clean(e.get("idEvent")) or f"tsdb_day_{sport}_{date}_{home}_{away}".replace(" ", "_")
+                    rows.append({
+                        "match_id": f"tsdb_day_{mid}",
+                        "date": date,
+                        "kickoff_kst": time_raw,
+                        "sport": clean(e.get("strSport")) or sport,
+                        "country": clean(e.get("strCountry")),
+                        "league": clean(e.get("strLeague")) or clean(e.get("strLeagueAlternate")),
+                        "home_team": home,
+                        "away_team": away,
+                        "status": clean(e.get("strStatus")) or "SCHEDULED",
+                        "source": f"thesportsdb_eventsday_{sport}",
+                        "home_score": clean(e.get("intHomeScore")),
+                        "away_score": clean(e.get("intAwayScore")),
+                    })
+                    parsed += 1
+                log.update({"parsed": parsed, "status": "ok", "message": f"date_range_parsed_{parsed}"})
+                logs.append(log)
+            except Exception as exc:
+                log["message"] = str(exc)
+                logs.append(log)
+                log_error("fetch_thesportsdb_date_range", url, str(exc))
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df = df.drop_duplicates(subset=["match_id"], keep="last")
+    return df, pd.DataFrame(logs)
+
+
+def collect_auto_schedule_for_matching(days: int = AUTO_MATCH_DAYS) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """v23: 앱이 직접 오늘~7일 자동수집 일정을 만들어 매칭용 source_livescore_schedule에 저장한다."""
+    fx, logs = fetch_thesportsdb_date_range(days=days)
+    if not fx.empty:
+        append_csv(SOURCE_FILES["source_livescore_schedule"], fx, ["match_id"])
+        append_csv(SOURCE_FILES["source_livescore_fixtures"], fx, ["match_id"])
+    if not logs.empty:
+        append_csv(OUTPUT_FILES["run_logs"], logs.rename(columns={"status": "source_status"}), subset=None)
+    return fx, logs
+
+
+def ensure_proto_ticket_from_markets() -> pd.DataFrame:
+    """v23: 이미 저장된 실제 프로토 기준점/배당 자료가 있으면 매칭용 프로토 경기표로 변환한다.
+    신규 웹 스크래핑이 아니라 기존 앱 자료(source_proto_ticket/source_proto_markets)를 자동으로 재사용한다.
+    """
+    existing = prepare_proto_ticket_df(read_csv(SOURCE_FILES.get("source_proto_ticket", "")))
+    market = read_csv(SOURCE_FILES.get("source_proto_markets", ""))
+    if market.empty:
+        return existing
+    market = normalize_columns(market)
     rows = []
-    for _, r in src.iterrows():
-        date, home, away = normalize_date(r.get("date")), clean(r.get("home_team")), clean(r.get("away_team"))
-        if not date or not home or not away:
-            continue
-        hs, aw = clean(r.get("home_score")), clean(r.get("away_score"))
-        # 예정경기만 추천 대상. 점수 있으면 완료 경기라 제외.
-        if hs or aw:
+    for i, r in market.iterrows():
+        home, away = clean(r.get("home_team")), clean(r.get("away_team"))
+        date = normalize_date(r.get("date"))
+        if not home or not away or not date:
             continue
         rows.append({
-            "match_id": clean(r.get("match_id")) or f"up_{date}_{home}_{away}".replace(" ", "_"),
+            "proto_game_no": clean(r.get("proto_game_no")) or clean(r.get("game_no")) or clean(r.get("match_no")) or f"market_{i+1}",
+            "proto_round": clean(r.get("proto_round")),
             "date": date,
             "kickoff_kst": clean(r.get("kickoff_kst")),
-            "sport": clean(r.get("sport")) or "축구",
-            "country": clean(r.get("country")),
             "league": clean(r.get("league")),
             "home_team": home,
             "away_team": away,
-            "status": "SCHEDULED",
-            "source": clean(r.get("source")) or "fixture_source",
+            "market_type": clean(r.get("market_type")) or "승무패",
+            "line_value": clean(r.get("line_value")),
+            "proto_pick": clean(r.get("proto_pick")) or clean(r.get("pick")),
+            "proto_odds": clean(r.get("proto_odds")) or clean(r.get("odds")) or clean(r.get("home_odds")),
+            "source": "source_proto_markets_auto",
         })
+    converted = prepare_proto_ticket_df(pd.DataFrame(rows)) if rows else pd.DataFrame()
+    if existing.empty:
+        out = converted
+    elif converted.empty:
+        out = existing
+    else:
+        out = pd.concat([existing, converted], ignore_index=True)
+        out = out.drop_duplicates(subset=["proto_game_no", "date", "home_team", "away_team", "market_type", "line_value"], keep="last")
+    if not out.empty:
+        write_csv(SOURCE_FILES["source_proto_ticket"], out)
+    return out
+
+
+def auto_collect_and_match(days: int = AUTO_MATCH_DAYS) -> Dict[str, Any]:
+    """v23 원클릭: 자동수집 일정 + 기존 프로토 자료 자동정리 + 매칭."""
+    fx, logs = collect_auto_schedule_for_matching(days=days)
+    proto = ensure_proto_ticket_from_markets()
+    matched = match_proto_with_livescore(proto_df=proto, live_df=read_csv(SOURCE_FILES["source_livescore_schedule"]), max_days=days)
+    matched_count = len(matched[matched.get("proto_livescore_status", pd.Series(dtype=str)).astype(str) == "MATCHED"]) if not matched.empty else 0
+    purchase_count = len(matched_rows_for_purchase(max_days=days))
+    summary = {
+        "time": now_text(),
+        "days": days,
+        "auto_schedule_rows": int(len(fx)),
+        "auto_schedule_total": int(len(read_csv(SOURCE_FILES["source_livescore_schedule"]))),
+        "proto_rows": int(len(proto)) if proto is not None else 0,
+        "matched_rows": int(matched_count),
+        "purchase_rows_today_7d": int(purchase_count),
+        "message": "자동수집 일정과 프로토 자료 매칭 완료",
+    }
+    log_run("auto_collect_and_match", "ok", json.dumps(summary, ensure_ascii=False), summary)
+    return summary
+
+def standardize_fixtures() -> Tuple[pd.DataFrame, str]:
+    """v23: 구매용 표준 일정은 MATCHED 경기만 사용한다.
+    자동수집 일정 단독, TheSportsDB 다음 예정 경기 단독, 8월 같은 먼 미래 일정은 구매용/오프라인 체크표에서 제외한다.
+    """
+    matched = matched_rows_for_purchase(max_days=AUTO_MATCH_DAYS)
+    rows = []
+    if matched is not None and not matched.empty:
+        for _, r in matched.iterrows():
+            date, home, away = normalize_date(r.get("date")), clean(r.get("home_team")), clean(r.get("away_team"))
+            if not date or not home or not away:
+                continue
+            rows.append({
+                "match_id": clean(r.get("match_id")) or f"matched_{date}_{home}_{away}".replace(" ", "_"),
+                "date": date,
+                "kickoff_kst": clean(r.get("kickoff_kst")) or clean(r.get("live_kickoff_kst")),
+                "sport": clean(r.get("sport")) or "축구",
+                "country": clean(r.get("country")),
+                "league": clean(r.get("league")) or clean(r.get("live_league")),
+                "home_team": home,
+                "away_team": away,
+                "status": clean(r.get("live_status")) or "SCHEDULED",
+                "source": "proto_livescore_matched_auto_schedule",
+                "proto_game_no": clean(r.get("proto_game_no")),
+                "proto_round": clean(r.get("proto_round")),
+                "proto_market_type": clean(r.get("market_type")),
+                "proto_pick": clean(r.get("proto_pick")),
+                "proto_odds": clean(r.get("proto_odds")),
+                "proto_livescore_status": "MATCHED",
+                "match_score": clean(r.get("match_score")),
+                "home_score": clean(r.get("home_score")),
+                "away_score": clean(r.get("away_score")),
+            })
     df = pd.DataFrame(rows).drop_duplicates(subset=["match_id"], keep="last") if rows else pd.DataFrame()
     write_csv(STANDARD_FILES["standard_upcoming_fixtures"], df)
-    return df, f"예정경기 {len(df)}건 표준화"
-
+    if df.empty:
+        return df, "구매용 MATCHED 경기 없음 · 자동수집 단독 일정은 오프라인 체크표 제외"
+    return df, f"구매용 MATCHED 경기 {len(df)}건 표준화"
 
 def standardize_history() -> Tuple[pd.DataFrame, str]:
     src = read_csv(SOURCE_FILES["source_football_data"])
@@ -826,7 +1187,7 @@ def calc_team_form(history: pd.DataFrame, team: str, league: str = "", n: int = 
 
 def calc_home_away(history: pd.DataFrame, team: str, side: str, league: str = "", n: int = 10) -> Dict[str, Any]:
     if history.empty:
-        return {"team": team, "side": side, "matches": 0, "wins": 0, "draws": 0, "losses": 0, "avg_for": 0, "avg_against": 0}
+        return {"team": team, "side": side, "league": league, "matches": 0, "wins": 0, "draws": 0, "losses": 0, "avg_for": 0, "avg_against": 0}
     df = history.copy()
     if league and "league" in df.columns:
         ldf = df[df["league"].astype(str).str.lower() == league.lower()]
@@ -1177,7 +1538,7 @@ def run_standardize_and_analyze() -> Tuple[pd.DataFrame, pd.DataFrame, Dict[str,
 def build_diagnosis() -> Dict[str, Any]:
     counts = file_counts()
     missing = []
-    if counts.get("source_livescore_fixtures", 0) == 0: missing.append("일정표 source 없음")
+    if counts.get("source_livescore_schedule", 0) == 0 and counts.get("source_livescore_fixtures", 0) == 0: missing.append("자동수집 일정 source 없음")
     if counts.get("source_football_data", 0) == 0: missing.append("과거자료 source 없음")
     if counts.get("standard_team_form", 0) == 0: missing.append("팀 최근폼 계산 없음")
     if counts.get("standard_team_home_away", 0) == 0: missing.append("홈/원정 계산 없음")
@@ -1272,12 +1633,22 @@ def run_full_pipeline(auto_fixtures=True, auto_history=True, send_hub=True):
         report.append(f"Sportmonks 수집: 신규 {sm_new}, 전체 {sm_total} · {clean(sm_logs.iloc[-1].get('message')) if not sm_logs.empty else '로그 없음'}")
         log_run("sportmonks_collect", "ok", report[-1])
 
-        # 2) 기존 TheSportsDB 일정표 자동수집은 그대로 유지
-        fx, logs = fetch_thesportsdb_fixtures()
-        n, total = append_csv(SOURCE_FILES["source_livescore_fixtures"], fx, ["match_id"])
-        append_csv(OUTPUT_FILES["run_logs"], logs.rename(columns={"status":"source_status"}) if not logs.empty else pd.DataFrame())
-        report.append(f"일정표 자동수집: 신규 {n}, 전체 {total}")
-        log_run("fixture_collect", "ok", report[-1])
+        # 2) v23: 오늘~7일 날짜 기준 자동수집 일정을 매칭용 source_livescore_schedule에 저장한다.
+        fx, logs = collect_auto_schedule_for_matching(days=AUTO_MATCH_DAYS)
+        report.append(f"자동수집 일정(오늘~7일): 신규/이번실행 {len(fx)}, 매칭용 전체 {len(read_csv(SOURCE_FILES['source_livescore_schedule']))}")
+        log_run("auto_schedule_collect", "ok", report[-1])
+
+    # v23: 기존 프로토 자료와 자동수집 일정을 자동 매칭한다. 형님이 일정표를 손으로 가져오지 않게 한다.
+    try:
+        proto = ensure_proto_ticket_from_markets()
+        matched = match_proto_with_livescore(proto_df=proto, live_df=read_csv(SOURCE_FILES["source_livescore_schedule"]), max_days=AUTO_MATCH_DAYS)
+        matched_count = len(matched[matched.get("proto_livescore_status", pd.Series(dtype=str)).astype(str) == "MATCHED"]) if not matched.empty else 0
+        purchase_count = len(matched_rows_for_purchase(max_days=AUTO_MATCH_DAYS))
+        report.append(f"프로토+자동수집 일정 매칭: MATCHED {matched_count} / 전체 {len(matched)} · 구매용 오늘~7일 {purchase_count}건")
+        log_run("proto_auto_schedule_match", "ok", report[-1])
+    except Exception as exc:
+        report.append(f"프로토+자동수집 일정 매칭 실패: {exc}")
+        log_error("proto_auto_schedule_match", "local", str(exc))
     if auto_history:
         hist, hlogs = fetch_football_data(max_seasons=2)
         n, total = append_csv(SOURCE_FILES["source_football_data"], hist, ["match_id"])
@@ -1867,13 +2238,19 @@ def build_prediction_explain_tables(fixtures: pd.DataFrame = None, analysis: pd.
         chk_rows.append({
             "created_at": now_text(), "match_id": mid, "date": normalize_date(fd.get("date")), "kickoff_kst": clean(fd.get("kickoff_kst")),
             "league": ko_league(fd.get("league")), "home_team_ko": home_ko, "away_team_ko": away_ko, "main_prediction": main_pred,
+            "proto_game_no": clean(fd.get("proto_game_no")),
+            "proto_market_type": clean(fd.get("proto_market_type")) or clean(fd.get("market_type")),
+            "proto_pick": clean(fd.get("proto_pick")),
+            "proto_odds": clean(fd.get("proto_odds")),
+            "livescore_match_status": clean(fd.get("proto_livescore_status")) or "MATCH_REQUIRED",
+            "match_score": clean(fd.get("match_score")),
             "check_match": f"경기명 확인: {home_ko} vs {away_ko}",
             "check_time": f"시간 확인: {clean(fd.get('kickoff_kst')) or '-'}",
-            "check_1x2": f"승무패 확인: {compact_pick_text(one) if one else '분석대기'}",
+            "check_1x2": f"승무패 확인: {compact_pick_text(one) if one else '분석대기'} / 실물배당 {clean(fd.get('proto_odds')) or '용지확인'}",
             "check_handicap": f"핸디캡 확인: {compact_pick_text(hcap) if hcap else '분석대기'}",
             "check_overunder": f"언더/오버 확인: {compact_pick_text(uo) if uo else '분석대기'}",
             "check_odds_change": "현장/공식 화면 배당 변동 확인",
-            "check_livescore": "라이브스코어 상태 확인",
+            "check_livescore": "라이브스코어 MATCHED 확인",
             "check_manual_marking": "오프라인에서 직접 마킹 완료 확인",
             "auto_buy": "NO", "auto_payment": "NO",
         })
@@ -2095,24 +2472,64 @@ def render_recent_outputs():
         st.dataframe(ko_df(miss.tail(100)), width="stretch", hide_index=True) if not miss.empty else st.info("부족자료 진단표 없음")
 
 def render_fixture_tab():
-    st.subheader("📅 일정표")
-    st.info("일정표는 자동수집이 기본입니다. 수동 입력은 빠진 경기 보완용입니다.")
-    if st.button("📅 일정표 자동수집 실행", type="primary"):
-        fx, logs = fetch_thesportsdb_fixtures()
-        n, total = append_csv(SOURCE_FILES["source_livescore_fixtures"], fx, ["match_id"])
-        append_csv(OUTPUT_FILES["run_logs"], logs, subset=None)
-        st.success(f"일정표 저장: 신규 {n}건 · 전체 {total}건")
-        st.dataframe(logs, width="stretch")
-    with st.expander("CSV/표 붙여넣기로 일정표 보완", expanded=False):
-        sample = "date,kickoff_kst,sport,league,home_team,away_team,status,source,match_id\n2026-07-10,20:00,축구,K League,Ulsan,Jeonbuk,SCHEDULED,manual,manual_001\n"
-        text = st.text_area("일정표 CSV", value=sample, height=120)
-        if st.button("일정표 보완 저장"):
-            df = normalize_columns(pd.read_csv(StringIO(text)))
-            n,total = append_csv(SOURCE_FILES["source_livescore_fixtures"], df, ["match_id"])
-            st.success(f"저장: 신규 {n}, 전체 {total}")
-    df = read_csv(SOURCE_FILES["source_livescore_fixtures"])
-    st.dataframe(df.tail(100), width="stretch") if not df.empty else st.info("일정표 source 없음")
+    st.subheader("📅 자동수집 일정 + 프로토 매칭")
+    st.warning("v23 기준: 형님이 일정표를 손으로 가져오지 않도록 앱이 오늘~7일 일정을 자동수집합니다. 단, 오프라인 체크표는 프로토 자료와 MATCHED 된 경기만 생성합니다.")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        if st.button("📡 오늘~7일 일정 자동수집", type="primary", use_container_width=True):
+            fx, logs = collect_auto_schedule_for_matching(days=AUTO_MATCH_DAYS)
+            st.success(f"자동수집 완료: 이번 실행 {len(fx)}건 · 매칭용 전체 {len(read_csv(SOURCE_FILES['source_livescore_schedule']))}건")
+            st.dataframe(logs.tail(80), width="stretch", hide_index=True) if not logs.empty else st.info("수집 로그 없음")
+    with c2:
+        if st.button("🔗 자동 매칭 실행", type="primary", use_container_width=True):
+            proto = ensure_proto_ticket_from_markets()
+            out = match_proto_with_livescore(proto_df=proto, live_df=read_csv(SOURCE_FILES["source_livescore_schedule"]), max_days=AUTO_MATCH_DAYS)
+            matched = out[out.get("proto_livescore_status", pd.Series(dtype=str)).astype(str) == "MATCHED"] if not out.empty else pd.DataFrame()
+            st.success(f"매칭 완료: MATCHED {len(matched)}건 / 전체 {len(out)}건")
+            st.dataframe(out.tail(200), width="stretch", hide_index=True) if not out.empty else st.warning("프로토 자료 또는 자동수집 일정이 부족합니다.")
+    with c3:
+        if st.button("🚀 자동수집+매칭+분석", type="primary", use_container_width=True):
+            summary = auto_collect_and_match(days=AUTO_MATCH_DAYS)
+            analysis, mobile, meta = run_standardize_and_analyze()
+            st.success(f"완료: 자동수집 {summary['auto_schedule_rows']}건 · MATCHED {summary['matched_rows']}건 · 오프라인 체크 {meta.get('offline_checklist_rows',0)}건")
+            st.json({"summary": summary, "analysis_rows": len(analysis), "mobile_rows": len(mobile), "meta": meta})
 
+    with st.expander("① 자동수집 일정 자료", expanded=True):
+        ldf = read_csv(SOURCE_FILES["source_livescore_schedule"])
+        st.caption("앱이 자동으로 가져온 오늘~7일 일정입니다. 이 자료만으로는 구매용 체크표를 만들지 않고, 프로토 자료와 MATCHED 된 경기만 사용합니다.")
+        st.dataframe(ldf.tail(200), width="stretch", hide_index=True) if not ldf.empty else st.info("자동수집 일정 source 없음")
+
+    with st.expander("② 프로토 자료", expanded=True):
+        pdf = ensure_proto_ticket_from_markets()
+        st.caption("기존 저장된 프로토 경기표/source_proto_markets 자료를 자동으로 매칭용으로 사용합니다. 프로토 자료가 없으면 구매용 MATCHED 경기는 0건입니다.")
+        st.dataframe(pdf.tail(200), width="stretch", hide_index=True) if pdf is not None and not pdf.empty else st.info("프로토 자료 없음")
+
+    with st.expander("③ 매칭 결과", expanded=True):
+        m = read_csv(SOURCE_FILES["matched_proto_livescore"])
+        if not m.empty:
+            st.dataframe(m.tail(300), width="stretch", hide_index=True)
+        else:
+            st.info("아직 매칭 결과가 없습니다. 자동수집+매칭을 실행하세요.")
+
+    with st.expander("④ 보조: 직접 붙여넣기/수동 보완", expanded=False):
+        st.caption("자동수집이 놓친 경기만 예외적으로 보완하는 곳입니다. 기본 사용 흐름은 자동수집+자동매칭입니다.")
+        proto_sample = "proto_game_no,date,kickoff_kst,league,home_team,away_team,market_type,line_value,proto_pick,proto_odds\n5702,2026-07-10,20:00,국제,한국M,일본M,승무패,,패,1.15\n"
+        text = st.text_area("프로토 보완 CSV", value=proto_sample, height=110, key="proto_ticket_text")
+        if st.button("프로토 보완 저장", key="save_proto_ticket"):
+            df = prepare_proto_ticket_df(parse_proto_or_livescore_text(text))
+            n,total = append_csv(SOURCE_FILES["source_proto_ticket"], df, ["proto_game_no", "date", "home_team", "away_team", "market_type", "line_value"])
+            st.success(f"프로토 보완 저장: 신규 {n}, 전체 {total}")
+        live_sample = f"date,kickoff_kst,sport,league,home_team,away_team,status,source\n{datetime.now(KST).date().isoformat()},20:00,축구,국제,한국M,일본M,SCHEDULED,manual_patch\n"
+        ltext = st.text_area("일정 보완 CSV", value=live_sample, height=110, key="livescore_schedule_text")
+        if st.button("일정 보완 저장", key="save_livescore_schedule"):
+            df = prepare_livescore_schedule_df(parse_proto_or_livescore_text(ltext))
+            n,total = append_csv(SOURCE_FILES["source_livescore_schedule"], df, ["match_id"])
+            st.success(f"일정 보완 저장: 신규 {n}, 전체 {total}")
+
+    with st.expander("⑤ 기존 다음 예정 경기 참고자료", expanded=False):
+        df = read_csv(SOURCE_FILES["source_livescore_fixtures"])
+        st.caption("참고용입니다. MATCHED 없이는 오프라인 체크표 생성 대상이 아닙니다.")
+        st.dataframe(df.tail(100), width="stretch", hide_index=True) if not df.empty else st.info("참고 일정 source 없음")
 
 def render_data_input_tab():
     st.subheader("🧾 자료 입력")
@@ -2553,7 +2970,7 @@ def render_mobile_premium_ticket_app():
     st.markdown(f"""
 <div class='maru-hero'>
   <div class='maru-hero-title'>모바일은 보기 편하게,<br><b>실물 티켓과 맞춰 확인</b></div>
-  <div class='maru-hero-sub'>전체 경기 → 분석 보기 → 결과 확인 → 오프라인 수동 체크</div>
+  <div class='maru-hero-sub'>프로토+자동수집 일정 MATCHED → 분석 보기 → 오프라인 수동 체크</div>
   <div class='maru-status-strip'>
     <span class='maru-status-pill'>허브 {diag.get('hub_url','OFF')}</span>
     <span class='maru-status-pill'>시트 {diag.get('google_sheet_url','OFF')}</span>
@@ -2601,7 +3018,7 @@ def render_mobile_premium_ticket_app():
     else:
         view = board[board["date"].astype(str) >= today].copy()
     if view.empty:
-        st.markdown("<div class='footer-note'>오늘/내일 경기가 없으면 전체 예정에서 다음 경기일을 확인하세요. 날짜가 8월로 보이면 현재 수집된 다음 예정경기가 8월이라는 뜻입니다.</div>", unsafe_allow_html=True)
+        st.markdown("<div class='footer-note'>프로토+자동수집 일정 MATCHED 경기만 오프라인 체크표에 표시합니다. 8월/먼 미래 자동수집 예정 경기는 구매용에서 제외됩니다.</div>", unsafe_allow_html=True)
         return
     view = view.sort_values(["date", "kickoff_kst", "league", "home_team"]).head(80)
     active_dates = sorted([d for d in view.get("date", pd.Series(dtype=str)).unique() if clean(d)])
@@ -2713,6 +3130,8 @@ def render_mobile_offline_ticket_panel(mdf: pd.DataFrame, board_row: Dict[str, A
     st.markdown(_ticket_summary_box(), unsafe_allow_html=True)
     st.write(f"**경기:** {home_ko} vs {away_ko}")
     st.write(f"**시간:** {clean(first.get('date')) or clean(board_row.get('date'))} {clean(first.get('kickoff_kst')) or clean(board_row.get('kickoff_kst'))}")
+    st.write(f"**매칭상태:** {clean(first.get("proto_livescore_status")) or clean(board_row.get("proto_livescore_status")) or 'MATCHED 확인 필요'}")
+    st.write(f"**프로토 경기번호:** {clean(first.get("proto_game_no")) or clean(board_row.get("proto_game_no")) or '용지 확인'}")
     st.write(f"**AI 후보:** {compact_pick_text(main) if main else '분석대기'}")
     st.write(f"**승무패:** {compact_pick_text(one) if one else '분석대기'}")
     st.write(f"**핸디캡:** {compact_pick_text(hcap) if hcap else '분석대기'}")
@@ -2762,7 +3181,7 @@ def render_mobile_ticket_expanders(mdf: pd.DataFrame, context: str, match_label:
 
 def render_mobile_only_app():
     render_mobile_premium_ticket_app()
-    st.caption(f"{APP_VERSION} · 모바일 전용 티켓 매칭 모드 · 자동구매/자동결제 없음 · 오프라인 수동 확인")
+    st.caption(f"{APP_VERSION} · 프로토+자동수집 일정 매칭 전용 모바일 모드 · 자동구매/자동결제 없음 · 오프라인 수동 확인")
 
 def main():
     ensure_dirs()
@@ -2773,7 +3192,7 @@ def main():
         return
 
     st.title("⚽ 마루 스포츠 프로토 일정 허브")
-    st.caption("일정표 자동수집 → 과거 빅데이터 매칭 → 승부식 분석 → 모바일 추천 → 허브/구글시트 전송")
+    st.caption("프로토 자료 + 자동수집 일정 매칭 → 과거 빅데이터 분석 → 모바일 수동구매 체크 → 허브/구글시트 전송")
     render_metrics()
     tabs = st.tabs(["대시보드", "전체 경기", "PC 모니터링", "일정표", "자료 입력", "모바일 추천", "허브 전송", "백엔드 진단"])
     with tabs[0]: render_full_run()
@@ -2786,7 +3205,7 @@ def main():
     with tabs[5]: render_mobile_tab()
     with tabs[6]: render_hub_tab()
     with tabs[7]: render_diagnosis_tab()
-    st.caption(f"{APP_VERSION} · {now_text()} · 자동구매/자동결제 없음 · 기존 기능 유지 + 모바일 전용 mode 분리")
+    st.caption(f"{APP_VERSION} · {now_text()} · 자동구매/자동결제 없음 · 프로토+자동수집 일정 MATCHED 경기만 오프라인 체크")
 
 
 if __name__ == "__main__":

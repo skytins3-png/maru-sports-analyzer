@@ -1,75 +1,403 @@
 {
-  "all_ok": true,
-  "results": [
+  "version": "v23-auto-schedule-proto-match",
+  "time": "2026-07-09 17:42:16 KST",
+  "total_checks": 79,
+  "status": "PASS",
+  "checks": [
     {
-      "name": "app.py 문법 검사",
-      "ok": true,
+      "name": "version_v23",
+      "status": "PASS",
       "detail": ""
     },
     {
-      "name": "함수 중복 검사",
-      "ok": true,
+      "name": "eventsday_api_present",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "eventsnextleague_not_primary",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "strict_matched_only",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "auto_buttons_present",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "no_auto_buy_code",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "no_auto_payment_code",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "function_duplicates",
+      "status": "PASS",
       "detail": "[]"
     },
     {
-      "name": "모바일 실제 버튼 코드 검사",
-      "ok": true,
-      "detail": "[]"
+      "name": "loop_1_matched_count",
+      "status": "PASS",
+      "detail": "matched=3"
     },
     {
-      "name": "자동구매/자동결제 활성값 없음",
-      "ok": true,
-      "detail": "[]"
+      "name": "loop_1_aug_excluded_purchase",
+      "status": "PASS",
+      "detail": "purchase_dates=0    2026-07-09\n1    2026-07-10\nName: date, dtype: object"
     },
     {
-      "name": "가상 데이터+실제 버튼 토글 테스트 1/10",
-      "ok": true,
-      "detail": " \"checklist_rows\": 6,\n  \"payload_summary\": {\n    \"app\": \"MARU SPORTS PROTO FIXTURE HUB\",\n    \"version\": \"v21-clickable-offline-ticket-mobile\",\n    \"type\": \"v21_test\",\n    \"analysis_rows\": 60,\n    \"mobile_rows\": 60,\n    \"source_fixtures\": 6,\n    \"standard_history\": 144,\n    \"hub_url\": \"OFF\",\n    \"google_sheet_url\": \"OFF\",\n    \"missing_data_rows\": 6\n  },\n  \"button_count\": 3,\n  \"checkbox_count\": 8\n}\n"
+      "name": "loop_1_strict_standard_only_matched",
+      "status": "PASS",
+      "detail": "fixtures=2 purchase=2 msg=구매용 MATCHED 경기 2건 표준화"
     },
     {
-      "name": "가상 데이터+실제 버튼 토글 테스트 2/10",
-      "ok": true,
-      "detail": " \"checklist_rows\": 6,\n  \"payload_summary\": {\n    \"app\": \"MARU SPORTS PROTO FIXTURE HUB\",\n    \"version\": \"v21-clickable-offline-ticket-mobile\",\n    \"type\": \"v21_test\",\n    \"analysis_rows\": 60,\n    \"mobile_rows\": 60,\n    \"source_fixtures\": 6,\n    \"standard_history\": 144,\n    \"hub_url\": \"OFF\",\n    \"google_sheet_url\": \"OFF\",\n    \"missing_data_rows\": 6\n  },\n  \"button_count\": 3,\n  \"checkbox_count\": 8\n}\n"
+      "name": "loop_1_offline_checklist_created",
+      "status": "PASS",
+      "detail": "checklist=2 fixtures=2"
     },
     {
-      "name": "가상 데이터+실제 버튼 토글 테스트 3/10",
-      "ok": true,
-      "detail": " \"checklist_rows\": 6,\n  \"payload_summary\": {\n    \"app\": \"MARU SPORTS PROTO FIXTURE HUB\",\n    \"version\": \"v21-clickable-offline-ticket-mobile\",\n    \"type\": \"v21_test\",\n    \"analysis_rows\": 60,\n    \"mobile_rows\": 60,\n    \"source_fixtures\": 6,\n    \"standard_history\": 144,\n    \"hub_url\": \"OFF\",\n    \"google_sheet_url\": \"OFF\",\n    \"missing_data_rows\": 6\n  },\n  \"button_count\": 3,\n  \"checkbox_count\": 8\n}\n"
+      "name": "loop_1_board_created",
+      "status": "PASS",
+      "detail": "board=2 fixtures=2"
     },
     {
-      "name": "가상 데이터+실제 버튼 토글 테스트 4/10",
-      "ok": true,
-      "detail": " \"checklist_rows\": 6,\n  \"payload_summary\": {\n    \"app\": \"MARU SPORTS PROTO FIXTURE HUB\",\n    \"version\": \"v21-clickable-offline-ticket-mobile\",\n    \"type\": \"v21_test\",\n    \"analysis_rows\": 60,\n    \"mobile_rows\": 60,\n    \"source_fixtures\": 6,\n    \"standard_history\": 144,\n    \"hub_url\": \"OFF\",\n    \"google_sheet_url\": \"OFF\",\n    \"missing_data_rows\": 6\n  },\n  \"button_count\": 3,\n  \"checkbox_count\": 8\n}\n"
+      "name": "loop_1_no_auto_buy",
+      "status": "PASS",
+      "detail": ""
     },
     {
-      "name": "가상 데이터+실제 버튼 토글 테스트 5/10",
-      "ok": true,
-      "detail": " \"checklist_rows\": 6,\n  \"payload_summary\": {\n    \"app\": \"MARU SPORTS PROTO FIXTURE HUB\",\n    \"version\": \"v21-clickable-offline-ticket-mobile\",\n    \"type\": \"v21_test\",\n    \"analysis_rows\": 60,\n    \"mobile_rows\": 60,\n    \"source_fixtures\": 6,\n    \"standard_history\": 144,\n    \"hub_url\": \"OFF\",\n    \"google_sheet_url\": \"OFF\",\n    \"missing_data_rows\": 6\n  },\n  \"button_count\": 3,\n  \"checkbox_count\": 8\n}\n"
+      "name": "loop_1_no_auto_payment",
+      "status": "PASS",
+      "detail": ""
     },
     {
-      "name": "가상 데이터+실제 버튼 토글 테스트 6/10",
-      "ok": true,
-      "detail": " \"checklist_rows\": 6,\n  \"payload_summary\": {\n    \"app\": \"MARU SPORTS PROTO FIXTURE HUB\",\n    \"version\": \"v21-clickable-offline-ticket-mobile\",\n    \"type\": \"v21_test\",\n    \"analysis_rows\": 60,\n    \"mobile_rows\": 60,\n    \"source_fixtures\": 6,\n    \"standard_history\": 144,\n    \"hub_url\": \"OFF\",\n    \"google_sheet_url\": \"OFF\",\n    \"missing_data_rows\": 6\n  },\n  \"button_count\": 3,\n  \"checkbox_count\": 8\n}\n"
+      "name": "loop_2_matched_count",
+      "status": "PASS",
+      "detail": "matched=3"
     },
     {
-      "name": "가상 데이터+실제 버튼 토글 테스트 7/10",
-      "ok": true,
-      "detail": " \"checklist_rows\": 6,\n  \"payload_summary\": {\n    \"app\": \"MARU SPORTS PROTO FIXTURE HUB\",\n    \"version\": \"v21-clickable-offline-ticket-mobile\",\n    \"type\": \"v21_test\",\n    \"analysis_rows\": 60,\n    \"mobile_rows\": 60,\n    \"source_fixtures\": 6,\n    \"standard_history\": 144,\n    \"hub_url\": \"OFF\",\n    \"google_sheet_url\": \"OFF\",\n    \"missing_data_rows\": 6\n  },\n  \"button_count\": 3,\n  \"checkbox_count\": 8\n}\n"
+      "name": "loop_2_aug_excluded_purchase",
+      "status": "PASS",
+      "detail": "purchase_dates=0    2026-07-09\n1    2026-07-10\nName: date, dtype: object"
     },
     {
-      "name": "가상 데이터+실제 버튼 토글 테스트 8/10",
-      "ok": true,
-      "detail": " \"checklist_rows\": 6,\n  \"payload_summary\": {\n    \"app\": \"MARU SPORTS PROTO FIXTURE HUB\",\n    \"version\": \"v21-clickable-offline-ticket-mobile\",\n    \"type\": \"v21_test\",\n    \"analysis_rows\": 60,\n    \"mobile_rows\": 60,\n    \"source_fixtures\": 6,\n    \"standard_history\": 144,\n    \"hub_url\": \"OFF\",\n    \"google_sheet_url\": \"OFF\",\n    \"missing_data_rows\": 6\n  },\n  \"button_count\": 3,\n  \"checkbox_count\": 8\n}\n"
+      "name": "loop_2_strict_standard_only_matched",
+      "status": "PASS",
+      "detail": "fixtures=2 purchase=2 msg=구매용 MATCHED 경기 2건 표준화"
     },
     {
-      "name": "가상 데이터+실제 버튼 토글 테스트 9/10",
-      "ok": true,
-      "detail": " \"checklist_rows\": 6,\n  \"payload_summary\": {\n    \"app\": \"MARU SPORTS PROTO FIXTURE HUB\",\n    \"version\": \"v21-clickable-offline-ticket-mobile\",\n    \"type\": \"v21_test\",\n    \"analysis_rows\": 60,\n    \"mobile_rows\": 60,\n    \"source_fixtures\": 6,\n    \"standard_history\": 144,\n    \"hub_url\": \"OFF\",\n    \"google_sheet_url\": \"OFF\",\n    \"missing_data_rows\": 6\n  },\n  \"button_count\": 3,\n  \"checkbox_count\": 8\n}\n"
+      "name": "loop_2_offline_checklist_created",
+      "status": "PASS",
+      "detail": "checklist=2 fixtures=2"
     },
     {
-      "name": "가상 데이터+실제 버튼 토글 테스트 10/10",
-      "ok": true,
-      "detail": " \"checklist_rows\": 6,\n  \"payload_summary\": {\n    \"app\": \"MARU SPORTS PROTO FIXTURE HUB\",\n    \"version\": \"v21-clickable-offline-ticket-mobile\",\n    \"type\": \"v21_test\",\n    \"analysis_rows\": 60,\n    \"mobile_rows\": 60,\n    \"source_fixtures\": 6,\n    \"standard_history\": 144,\n    \"hub_url\": \"OFF\",\n    \"google_sheet_url\": \"OFF\",\n    \"missing_data_rows\": 6\n  },\n  \"button_count\": 3,\n  \"checkbox_count\": 8\n}\n"
+      "name": "loop_2_board_created",
+      "status": "PASS",
+      "detail": "board=2 fixtures=2"
+    },
+    {
+      "name": "loop_2_no_auto_buy",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "loop_2_no_auto_payment",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "loop_3_matched_count",
+      "status": "PASS",
+      "detail": "matched=3"
+    },
+    {
+      "name": "loop_3_aug_excluded_purchase",
+      "status": "PASS",
+      "detail": "purchase_dates=0    2026-07-09\n1    2026-07-10\nName: date, dtype: object"
+    },
+    {
+      "name": "loop_3_strict_standard_only_matched",
+      "status": "PASS",
+      "detail": "fixtures=2 purchase=2 msg=구매용 MATCHED 경기 2건 표준화"
+    },
+    {
+      "name": "loop_3_offline_checklist_created",
+      "status": "PASS",
+      "detail": "checklist=2 fixtures=2"
+    },
+    {
+      "name": "loop_3_board_created",
+      "status": "PASS",
+      "detail": "board=2 fixtures=2"
+    },
+    {
+      "name": "loop_3_no_auto_buy",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "loop_3_no_auto_payment",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "loop_4_matched_count",
+      "status": "PASS",
+      "detail": "matched=3"
+    },
+    {
+      "name": "loop_4_aug_excluded_purchase",
+      "status": "PASS",
+      "detail": "purchase_dates=0    2026-07-09\n1    2026-07-10\nName: date, dtype: object"
+    },
+    {
+      "name": "loop_4_strict_standard_only_matched",
+      "status": "PASS",
+      "detail": "fixtures=2 purchase=2 msg=구매용 MATCHED 경기 2건 표준화"
+    },
+    {
+      "name": "loop_4_offline_checklist_created",
+      "status": "PASS",
+      "detail": "checklist=2 fixtures=2"
+    },
+    {
+      "name": "loop_4_board_created",
+      "status": "PASS",
+      "detail": "board=2 fixtures=2"
+    },
+    {
+      "name": "loop_4_no_auto_buy",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "loop_4_no_auto_payment",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "loop_5_matched_count",
+      "status": "PASS",
+      "detail": "matched=3"
+    },
+    {
+      "name": "loop_5_aug_excluded_purchase",
+      "status": "PASS",
+      "detail": "purchase_dates=0    2026-07-09\n1    2026-07-10\nName: date, dtype: object"
+    },
+    {
+      "name": "loop_5_strict_standard_only_matched",
+      "status": "PASS",
+      "detail": "fixtures=2 purchase=2 msg=구매용 MATCHED 경기 2건 표준화"
+    },
+    {
+      "name": "loop_5_offline_checklist_created",
+      "status": "PASS",
+      "detail": "checklist=2 fixtures=2"
+    },
+    {
+      "name": "loop_5_board_created",
+      "status": "PASS",
+      "detail": "board=2 fixtures=2"
+    },
+    {
+      "name": "loop_5_no_auto_buy",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "loop_5_no_auto_payment",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "loop_6_matched_count",
+      "status": "PASS",
+      "detail": "matched=3"
+    },
+    {
+      "name": "loop_6_aug_excluded_purchase",
+      "status": "PASS",
+      "detail": "purchase_dates=0    2026-07-09\n1    2026-07-10\nName: date, dtype: object"
+    },
+    {
+      "name": "loop_6_strict_standard_only_matched",
+      "status": "PASS",
+      "detail": "fixtures=2 purchase=2 msg=구매용 MATCHED 경기 2건 표준화"
+    },
+    {
+      "name": "loop_6_offline_checklist_created",
+      "status": "PASS",
+      "detail": "checklist=2 fixtures=2"
+    },
+    {
+      "name": "loop_6_board_created",
+      "status": "PASS",
+      "detail": "board=2 fixtures=2"
+    },
+    {
+      "name": "loop_6_no_auto_buy",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "loop_6_no_auto_payment",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "loop_7_matched_count",
+      "status": "PASS",
+      "detail": "matched=3"
+    },
+    {
+      "name": "loop_7_aug_excluded_purchase",
+      "status": "PASS",
+      "detail": "purchase_dates=0    2026-07-09\n1    2026-07-10\nName: date, dtype: object"
+    },
+    {
+      "name": "loop_7_strict_standard_only_matched",
+      "status": "PASS",
+      "detail": "fixtures=2 purchase=2 msg=구매용 MATCHED 경기 2건 표준화"
+    },
+    {
+      "name": "loop_7_offline_checklist_created",
+      "status": "PASS",
+      "detail": "checklist=2 fixtures=2"
+    },
+    {
+      "name": "loop_7_board_created",
+      "status": "PASS",
+      "detail": "board=2 fixtures=2"
+    },
+    {
+      "name": "loop_7_no_auto_buy",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "loop_7_no_auto_payment",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "loop_8_matched_count",
+      "status": "PASS",
+      "detail": "matched=3"
+    },
+    {
+      "name": "loop_8_aug_excluded_purchase",
+      "status": "PASS",
+      "detail": "purchase_dates=0    2026-07-09\n1    2026-07-10\nName: date, dtype: object"
+    },
+    {
+      "name": "loop_8_strict_standard_only_matched",
+      "status": "PASS",
+      "detail": "fixtures=2 purchase=2 msg=구매용 MATCHED 경기 2건 표준화"
+    },
+    {
+      "name": "loop_8_offline_checklist_created",
+      "status": "PASS",
+      "detail": "checklist=2 fixtures=2"
+    },
+    {
+      "name": "loop_8_board_created",
+      "status": "PASS",
+      "detail": "board=2 fixtures=2"
+    },
+    {
+      "name": "loop_8_no_auto_buy",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "loop_8_no_auto_payment",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "loop_9_matched_count",
+      "status": "PASS",
+      "detail": "matched=3"
+    },
+    {
+      "name": "loop_9_aug_excluded_purchase",
+      "status": "PASS",
+      "detail": "purchase_dates=0    2026-07-09\n1    2026-07-10\nName: date, dtype: object"
+    },
+    {
+      "name": "loop_9_strict_standard_only_matched",
+      "status": "PASS",
+      "detail": "fixtures=2 purchase=2 msg=구매용 MATCHED 경기 2건 표준화"
+    },
+    {
+      "name": "loop_9_offline_checklist_created",
+      "status": "PASS",
+      "detail": "checklist=2 fixtures=2"
+    },
+    {
+      "name": "loop_9_board_created",
+      "status": "PASS",
+      "detail": "board=2 fixtures=2"
+    },
+    {
+      "name": "loop_9_no_auto_buy",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "loop_9_no_auto_payment",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "loop_10_matched_count",
+      "status": "PASS",
+      "detail": "matched=3"
+    },
+    {
+      "name": "loop_10_aug_excluded_purchase",
+      "status": "PASS",
+      "detail": "purchase_dates=0    2026-07-09\n1    2026-07-10\nName: date, dtype: object"
+    },
+    {
+      "name": "loop_10_strict_standard_only_matched",
+      "status": "PASS",
+      "detail": "fixtures=2 purchase=2 msg=구매용 MATCHED 경기 2건 표준화"
+    },
+    {
+      "name": "loop_10_offline_checklist_created",
+      "status": "PASS",
+      "detail": "checklist=2 fixtures=2"
+    },
+    {
+      "name": "loop_10_board_created",
+      "status": "PASS",
+      "detail": "board=2 fixtures=2"
+    },
+    {
+      "name": "loop_10_no_auto_buy",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "loop_10_no_auto_payment",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "auto_collect_and_match_summary",
+      "status": "PASS",
+      "detail": "{\"time\": \"2026-07-09 17:42:16 KST\", \"days\": 7, \"auto_schedule_rows\": 3, \"auto_schedule_total\": 3, \"proto_rows\": 3, \"matched_rows\": 3, \"purchase_rows_today_7d\": 2, \"message\": \"자동수집 일정과 프로토 자료 매칭 완료\"}"
     }
   ]
 }

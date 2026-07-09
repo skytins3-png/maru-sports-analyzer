@@ -1,115 +1,116 @@
-# v21 TEST REPORT
+# v23-auto-schedule-proto-match TEST REPORT
 
-- version: v21-clickable-offline-ticket-mobile
-- purpose: 실제 눌리는 모바일 버튼 + 오프라인 수동구매 체크 + 허브 확인
-- result: PASS
+- time: 2026-07-09 17:42:16 KST
+- status: PASS
+- total_checks: 79
 
-- [PASS] app.py 문법 검사: 
-- [PASS] 함수 중복 검사: []
-- [PASS] 모바일 실제 버튼 코드 검사: []
-- [PASS] 자동구매/자동결제 활성값 없음: []
-- [PASS] 가상 데이터+실제 버튼 토글 테스트 1/10:  "checklist_rows": 6,
-  "payload_summary": {
-    "app": "MARU SPORTS PROTO FIXTURE HUB",
-    "version": "v21-clickable-offline-ticket-mobile",
-    "type": "v21_test",
-    "analysis_rows": 60,
-    "mobile_rows": 60,
-    "source_fixtures": 6,
-    "stan
-- [PASS] 가상 데이터+실제 버튼 토글 테스트 2/10:  "checklist_rows": 6,
-  "payload_summary": {
-    "app": "MARU SPORTS PROTO FIXTURE HUB",
-    "version": "v21-clickable-offline-ticket-mobile",
-    "type": "v21_test",
-    "analysis_rows": 60,
-    "mobile_rows": 60,
-    "source_fixtures": 6,
-    "stan
-- [PASS] 가상 데이터+실제 버튼 토글 테스트 3/10:  "checklist_rows": 6,
-  "payload_summary": {
-    "app": "MARU SPORTS PROTO FIXTURE HUB",
-    "version": "v21-clickable-offline-ticket-mobile",
-    "type": "v21_test",
-    "analysis_rows": 60,
-    "mobile_rows": 60,
-    "source_fixtures": 6,
-    "stan
-- [PASS] 가상 데이터+실제 버튼 토글 테스트 4/10:  "checklist_rows": 6,
-  "payload_summary": {
-    "app": "MARU SPORTS PROTO FIXTURE HUB",
-    "version": "v21-clickable-offline-ticket-mobile",
-    "type": "v21_test",
-    "analysis_rows": 60,
-    "mobile_rows": 60,
-    "source_fixtures": 6,
-    "stan
-- [PASS] 가상 데이터+실제 버튼 토글 테스트 5/10:  "checklist_rows": 6,
-  "payload_summary": {
-    "app": "MARU SPORTS PROTO FIXTURE HUB",
-    "version": "v21-clickable-offline-ticket-mobile",
-    "type": "v21_test",
-    "analysis_rows": 60,
-    "mobile_rows": 60,
-    "source_fixtures": 6,
-    "stan
-- [PASS] 가상 데이터+실제 버튼 토글 테스트 6/10:  "checklist_rows": 6,
-  "payload_summary": {
-    "app": "MARU SPORTS PROTO FIXTURE HUB",
-    "version": "v21-clickable-offline-ticket-mobile",
-    "type": "v21_test",
-    "analysis_rows": 60,
-    "mobile_rows": 60,
-    "source_fixtures": 6,
-    "stan
-- [PASS] 가상 데이터+실제 버튼 토글 테스트 7/10:  "checklist_rows": 6,
-  "payload_summary": {
-    "app": "MARU SPORTS PROTO FIXTURE HUB",
-    "version": "v21-clickable-offline-ticket-mobile",
-    "type": "v21_test",
-    "analysis_rows": 60,
-    "mobile_rows": 60,
-    "source_fixtures": 6,
-    "stan
-- [PASS] 가상 데이터+실제 버튼 토글 테스트 8/10:  "checklist_rows": 6,
-  "payload_summary": {
-    "app": "MARU SPORTS PROTO FIXTURE HUB",
-    "version": "v21-clickable-offline-ticket-mobile",
-    "type": "v21_test",
-    "analysis_rows": 60,
-    "mobile_rows": 60,
-    "source_fixtures": 6,
-    "stan
-- [PASS] 가상 데이터+실제 버튼 토글 테스트 9/10:  "checklist_rows": 6,
-  "payload_summary": {
-    "app": "MARU SPORTS PROTO FIXTURE HUB",
-    "version": "v21-clickable-offline-ticket-mobile",
-    "type": "v21_test",
-    "analysis_rows": 60,
-    "mobile_rows": 60,
-    "source_fixtures": 6,
-    "stan
-- [PASS] 가상 데이터+실제 버튼 토글 테스트 10/10:  "checklist_rows": 6,
-  "payload_summary": {
-    "app": "MARU SPORTS PROTO FIXTURE HUB",
-    "version": "v21-clickable-offline-ticket-mobile",
-    "type": "v21_test",
-    "analysis_rows": 60,
-    "mobile_rows": 60,
-    "source_fixtures": 6,
-    "stan
+## 핵심 확인
 
-## 확인한 것
-- 분석보기 버튼: st.button + session_state 토글 구조 확인
-- 오프라인 체크 버튼: st.button + session_state 토글 구조 확인
-- 허브확인 버튼: st.button + session_state 토글 구조 확인
-- 오프라인 체크박스 8개 렌더 확인
-- 가상 6경기에서 60건 분석 생성 확인
-- 전체 경기판 6건 생성 확인
-- prediction_explain 6건 생성 확인
-- offline_checklist 6건 생성 확인
-- 허브 payload 구조 검사 통과
-- auto_buy / auto_payment 값은 NO
+- app.py 문법 검사: PASS
+- eventsday 날짜범위 자동수집 코드: PASS
+- 형님 수동 일정표 붙여넣기 없이 자동수집 source_livescore_schedule 생성 구조: PASS
+- 프로토 자료 + 자동수집 일정 매칭: PASS
+- MATCHED 경기만 구매용 표준 일정/오프라인 체크표 생성: PASS
+- 8월/먼 미래 경기 구매용 제외: PASS
+- 자동구매/자동결제 없음: PASS
 
-## 한계
-- 여기서는 Streamlit Cloud 실제 배포 URL을 직접 열어 휴대폰으로 누른 검사는 못 했습니다. 대신 fake Streamlit으로 버튼 클릭 상태와 패널 렌더링을 검증했습니다. 업로드 후 모바일에서 최종 확인해야 합니다.
+## 반복 테스트
+- version_v23: PASS 
+- eventsday_api_present: PASS 
+- eventsnextleague_not_primary: PASS 
+- strict_matched_only: PASS 
+- auto_buttons_present: PASS 
+- no_auto_buy_code: PASS 
+- no_auto_payment_code: PASS 
+- function_duplicates: PASS []
+- loop_1_matched_count: PASS matched=3
+- loop_1_aug_excluded_purchase: PASS purchase_dates=0    2026-07-09
+1    2026-07-10
+Name: date, dtype: object
+- loop_1_strict_standard_only_matched: PASS fixtures=2 purchase=2 msg=구매용 MATCHED 경기 2건 표준화
+- loop_1_offline_checklist_created: PASS checklist=2 fixtures=2
+- loop_1_board_created: PASS board=2 fixtures=2
+- loop_1_no_auto_buy: PASS 
+- loop_1_no_auto_payment: PASS 
+- loop_2_matched_count: PASS matched=3
+- loop_2_aug_excluded_purchase: PASS purchase_dates=0    2026-07-09
+1    2026-07-10
+Name: date, dtype: object
+- loop_2_strict_standard_only_matched: PASS fixtures=2 purchase=2 msg=구매용 MATCHED 경기 2건 표준화
+- loop_2_offline_checklist_created: PASS checklist=2 fixtures=2
+- loop_2_board_created: PASS board=2 fixtures=2
+- loop_2_no_auto_buy: PASS 
+- loop_2_no_auto_payment: PASS 
+- loop_3_matched_count: PASS matched=3
+- loop_3_aug_excluded_purchase: PASS purchase_dates=0    2026-07-09
+1    2026-07-10
+Name: date, dtype: object
+- loop_3_strict_standard_only_matched: PASS fixtures=2 purchase=2 msg=구매용 MATCHED 경기 2건 표준화
+- loop_3_offline_checklist_created: PASS checklist=2 fixtures=2
+- loop_3_board_created: PASS board=2 fixtures=2
+- loop_3_no_auto_buy: PASS 
+- loop_3_no_auto_payment: PASS 
+- loop_4_matched_count: PASS matched=3
+- loop_4_aug_excluded_purchase: PASS purchase_dates=0    2026-07-09
+1    2026-07-10
+Name: date, dtype: object
+- loop_4_strict_standard_only_matched: PASS fixtures=2 purchase=2 msg=구매용 MATCHED 경기 2건 표준화
+- loop_4_offline_checklist_created: PASS checklist=2 fixtures=2
+- loop_4_board_created: PASS board=2 fixtures=2
+- loop_4_no_auto_buy: PASS 
+- loop_4_no_auto_payment: PASS 
+- loop_5_matched_count: PASS matched=3
+- loop_5_aug_excluded_purchase: PASS purchase_dates=0    2026-07-09
+1    2026-07-10
+Name: date, dtype: object
+- loop_5_strict_standard_only_matched: PASS fixtures=2 purchase=2 msg=구매용 MATCHED 경기 2건 표준화
+- loop_5_offline_checklist_created: PASS checklist=2 fixtures=2
+- loop_5_board_created: PASS board=2 fixtures=2
+- loop_5_no_auto_buy: PASS 
+- loop_5_no_auto_payment: PASS 
+- loop_6_matched_count: PASS matched=3
+- loop_6_aug_excluded_purchase: PASS purchase_dates=0    2026-07-09
+1    2026-07-10
+Name: date, dtype: object
+- loop_6_strict_standard_only_matched: PASS fixtures=2 purchase=2 msg=구매용 MATCHED 경기 2건 표준화
+- loop_6_offline_checklist_created: PASS checklist=2 fixtures=2
+- loop_6_board_created: PASS board=2 fixtures=2
+- loop_6_no_auto_buy: PASS 
+- loop_6_no_auto_payment: PASS 
+- loop_7_matched_count: PASS matched=3
+- loop_7_aug_excluded_purchase: PASS purchase_dates=0    2026-07-09
+1    2026-07-10
+Name: date, dtype: object
+- loop_7_strict_standard_only_matched: PASS fixtures=2 purchase=2 msg=구매용 MATCHED 경기 2건 표준화
+- loop_7_offline_checklist_created: PASS checklist=2 fixtures=2
+- loop_7_board_created: PASS board=2 fixtures=2
+- loop_7_no_auto_buy: PASS 
+- loop_7_no_auto_payment: PASS 
+- loop_8_matched_count: PASS matched=3
+- loop_8_aug_excluded_purchase: PASS purchase_dates=0    2026-07-09
+1    2026-07-10
+Name: date, dtype: object
+- loop_8_strict_standard_only_matched: PASS fixtures=2 purchase=2 msg=구매용 MATCHED 경기 2건 표준화
+- loop_8_offline_checklist_created: PASS checklist=2 fixtures=2
+- loop_8_board_created: PASS board=2 fixtures=2
+- loop_8_no_auto_buy: PASS 
+- loop_8_no_auto_payment: PASS 
+- loop_9_matched_count: PASS matched=3
+- loop_9_aug_excluded_purchase: PASS purchase_dates=0    2026-07-09
+1    2026-07-10
+Name: date, dtype: object
+- loop_9_strict_standard_only_matched: PASS fixtures=2 purchase=2 msg=구매용 MATCHED 경기 2건 표준화
+- loop_9_offline_checklist_created: PASS checklist=2 fixtures=2
+- loop_9_board_created: PASS board=2 fixtures=2
+- loop_9_no_auto_buy: PASS 
+- loop_9_no_auto_payment: PASS 
+- loop_10_matched_count: PASS matched=3
+- loop_10_aug_excluded_purchase: PASS purchase_dates=0    2026-07-09
+1    2026-07-10
+Name: date, dtype: object
+- loop_10_strict_standard_only_matched: PASS fixtures=2 purchase=2 msg=구매용 MATCHED 경기 2건 표준화
+- loop_10_offline_checklist_created: PASS checklist=2 fixtures=2
+- loop_10_board_created: PASS board=2 fixtures=2
+- loop_10_no_auto_buy: PASS 
+- loop_10_no_auto_payment: PASS 
+- auto_collect_and_match_summary: PASS {"time": "2026-07-09 17:42:16 KST", "days": 7, "auto_schedule_rows": 3, "auto_schedule_total": 3, "proto_rows": 3, "matched_rows": 3, "purchase_rows_today_7d": 2, "message": "자동수집 일정과 프로토 자료 매칭 완료"}
